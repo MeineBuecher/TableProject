@@ -22,8 +22,8 @@
         <button onclick="createRoom()">Raum erstellen</button>
         <button onclick="joinRoom()">Raum beitreten</button>
         <button id="workNowBtn" onclick="workNow()">Ich arbeite jetzt</button>
-        <button id="pauseWorkBtn" onclick="pauseRoom()">Raum pausieren</button>
-        <button id="resumeWorkBtn" onclick="resumeRoom()">Raum fortsetzen</button>
+        <button id="pauseWorkBtn" onclick="pauseWork()">Raum pausieren</button>
+        <button id="resumeWorkBtn" onclick="resumeWork()">Raum fortsetzen</button>
         <button id="stopWorkBtn" onclick="stopWork()">Arbeit beenden</button>
         <button id="leaveRoomBtn" onclick="leaveRoom()">Raum verlassen</button>
       </div>
@@ -39,37 +39,91 @@
       <div class="participants-card" id="participantsBox"></div>
     </div>
 
-    <div class="workspace">
+    <div class="workspace workspace-large">
       <div class="workspace-header">
-        <h2>Arbeitsfläche</h2>
-        <p>Hier entsteht der gemeinsame Raum für Inhalte, Dateien und Freigaben.</p>
+        <div>
+          <h2>Arbeitsfläche</h2>
+          <p>Gemeinsamer Raum für Dateien, Bilder, Texte und Bildschirmfreigaben.</p>
+        </div>
+        <div class="workspace-header-actions">
+          <button type="button" class="workspace-action-btn" id="uploadFileBtn">Datei hochladen</button>
+          <button type="button" class="workspace-action-btn" id="uploadImageBtn">Bild hochladen</button>
+          <button type="button" class="workspace-action-btn" id="addTextBtn">Text hinzufügen</button>
+          <button type="button" class="workspace-action-btn" id="shareScreenBtn">Bildschirm freigeben</button>
+        </div>
       </div>
 
-      <div class="workspace-grid">
-        <div class="workspace-card">
-          <div class="workspace-card-header">
-            <h3>Dateien</h3>
+      <div class="workspace-main-grid">
+        <div class="workspace-column">
+          <div class="workspace-card drop-card">
+            <div class="workspace-card-header">
+              <h3>Dateien</h3>
+              <span class="workspace-mini-info">Drag & Drop oder Upload</span>
+            </div>
+            <div class="workspace-card-body drop-zone" id="filesArea">
+              <p>Noch keine Dateien im Raum</p>
+            </div>
           </div>
-          <div class="workspace-card-body" id="filesArea">
-            <p>Noch keine Dateien im Raum</p>
+
+          <div class="workspace-card drop-card">
+            <div class="workspace-card-header">
+              <h3>Texte / Notizen</h3>
+              <span class="workspace-mini-info">Kurze Hinweise, Links, Ideen</span>
+            </div>
+            <div class="workspace-card-body text-area" id="textsArea">
+              <p>Noch keine Texte im Raum</p>
+            </div>
           </div>
         </div>
 
-        <div class="workspace-card">
-          <div class="workspace-card-header">
-            <h3>Bilder</h3>
-          </div>
-          <div class="workspace-card-body" id="imagesArea">
-            <p>Noch keine Bilder im Raum</p>
+        <div class="workspace-column">
+          <div class="workspace-card drop-card">
+            <div class="workspace-card-header">
+              <h3>Bilder</h3>
+              <span class="workspace-mini-info">Direkt sichtbar im Raum</span>
+            </div>
+            <div class="workspace-card-body drop-zone image-area" id="imagesArea">
+              <p>Noch keine Bilder im Raum</p>
+            </div>
           </div>
         </div>
+      </div>
 
-        <div class="workspace-card workspace-card-wide">
+      <div class="workspace-screen-block">
+        <div class="workspace-card">
           <div class="workspace-card-header">
-            <h3>Bildschirmfreigabe</h3>
+            <h3>Bildschirmfreigaben</h3>
+            <span class="workspace-mini-info">Bis zu 4 Screens zum direkten Vergleich</span>
           </div>
-          <div class="workspace-card-body screen-area" id="screenArea">
-            <p>Noch keine Bildschirmfreigabe aktiv</p>
+
+          <div class="screens-grid" id="screenArea">
+            <div class="screen-slot">
+              <div class="screen-slot-header">Screen 1</div>
+              <div class="screen-slot-body">
+                <p>Keine Freigabe aktiv</p>
+              </div>
+            </div>
+
+            <div class="screen-slot">
+              <div class="screen-slot-header">Screen 2</div>
+              <div class="screen-slot-body">
+                <p>Keine Freigabe aktiv</p>
+              </div>
+            </div>
+
+            <div class="screen-slot">
+              <div class="screen-slot-header">Screen 3</div>
+              <div class="screen-slot-body">
+                <p>Keine Freigabe aktiv</p>
+              </div>
+            </div>
+
+            <div class="screen-slot">
+              <div class="screen-slot-header">Screen 4</div>
+              <div class="screen-slot-body">
+                <p>Keine Freigabe aktiv</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>
