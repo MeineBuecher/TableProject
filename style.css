@@ -14,7 +14,7 @@ body {
   border-radius: 20px;
   text-align: center;
   width: 320px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
 }
 
 .logo {
@@ -32,7 +32,6 @@ input {
   margin-bottom: 10px;
   border-radius: 10px;
   border: 1px solid #ccc;
-  box-sizing: border-box;
 }
 
 button {
@@ -53,5 +52,5 @@ button:hover {
 
 #status {
   margin-top: 10px;
-  min-height: 24px;
+  min-height: 20px;
 }
