@@ -32,7 +32,7 @@ body {
 
 h1 {
   margin: 0 0 20px;
-  font-size: 2.2rem;
+  font-size: 2rem;
   line-height: 1.1;
 }
 
@@ -42,7 +42,7 @@ input {
   margin-bottom: 12px;
   border-radius: 16px;
   border: 2px solid #d9d9d9;
-  font-size: 1.1rem;
+  font-size: 1rem;
 }
 
 button {
@@ -54,7 +54,7 @@ button {
   background: #ff6a00;
   color: white;
   font-weight: bold;
-  font-size: 1.1rem;
+  font-size: 1rem;
   cursor: pointer;
 }
 
@@ -69,20 +69,50 @@ button:hover {
   line-height: 1.4;
 }
 
-#participantsBox {
+#ownerBox,
+#participantsBox,
+#workerBox,
+#lockBox {
   margin-top: 18px;
   text-align: center;
   font-size: 1rem;
   line-height: 1.5;
 }
 
-#participantsBox h3 {
+#ownerBox h3,
+#participantsBox h3,
+#workerBox h3 {
   margin: 0 0 10px;
-  font-size: 1.8rem;
+  font-size: 1.2rem;
+}
+
+#ownerBox p,
+#workerBox p {
+  margin: 0;
+  font-weight: bold;
 }
 
 #participantsBox div {
   margin-bottom: 6px;
+}
+
+#lockBox {
+  padding: 12px;
+  border-radius: 14px;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.lock-open {
+  background: #e9f8ec;
+  color: #1f7a34;
+  border: 1px solid #b9e3c3;
+}
+
+.lock-closed {
+  background: #fff1f1;
+  color: #b42318;
+  border: 1px solid #f0b3b3;
 }
 
 @media (max-width: 600px) {
@@ -115,31 +145,17 @@ button:hover {
     border-radius: 14px;
   }
 
-  #status {
+  #status,
+  #ownerBox,
+  #participantsBox,
+  #workerBox,
+  #lockBox {
     font-size: 0.95rem;
   }
 
-  #participantsBox {
-    font-size: 0.95rem;
+  #ownerBox h3,
+  #participantsBox h3,
+  #workerBox h3 {
+    font-size: 1.1rem;
   }
-
-  #participantsBox h3 {
-    font-size: 1.2rem;
-  }
-}
-#activeBox {
-  margin-top: 18px;
-  text-align: center;
-  font-size: 1rem;
-  line-height: 1.5;
-}
-
-#activeBox h3 {
-  margin: 0 0 10px;
-  font-size: 1.4rem;
-}
-
-#activeBox div,
-#activeBox p {
-  margin: 0;
 }
