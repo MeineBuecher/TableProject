@@ -27,6 +27,42 @@ function getOwnerBox() {
   return document.getElementById("ownerBox");
 }
 
+function getWorkNowButton() {
+  return document.getElementById("workNowBtn");
+}
+
+function getStopWorkButton() {
+  return document.getElementById("stopWorkBtn");
+}
+
+function updateWorkButtons(activeWorkerName) {
+  const workBtn = getWorkNowButton();
+  const stopBtn = getStopWorkButton();
+
+  if (!workBtn || !stopBtn) return;
+
+  if (!currentRoom || !currentParticipantName) {
+    workBtn.disabled = true;
+    stopBtn.disabled = true;
+    return;
+  }
+
+  if (!activeWorkerName) {
+    workBtn.disabled = false;
+    stopBtn.disabled = true;
+    return;
+  }
+
+  if (activeWorkerName === currentParticipantName) {
+    workBtn.disabled = true;
+    stopBtn.disabled = false;
+    return;
+  }
+
+  workBtn.disabled = true;
+  stopBtn.disabled = true;
+}
+
 function loadSavedName() {
   const saved = localStorage.getItem(SAVED_NAME_KEY);
   const input = document.getElementById("nameInput");
@@ -367,17 +403,23 @@ async function loadWorker() {
 
     if (error) {
       box.innerHTML = "<h3>Aktiv:</h3><p>Arbeitsstatus konnte nicht geladen werden</p>";
+      updateWorkButtons(null);
       return;
     }
 
     if (!data || data.length === 0) {
       box.innerHTML = "<h3>Aktiv:</h3><p>Gerade arbeitet niemand</p>";
+      updateWorkButtons(null);
       return;
     }
 
-    box.innerHTML = `<h3>Aktiv:</h3><p>${data[0].worker_name}</p>`;
+    const activeWorkerName = data[0].worker_name;
+
+    box.innerHTML = `<h3>Aktiv:</h3><p>${activeWorkerName}</p>`;
+    updateWorkButtons(activeWorkerName);
   } catch (err) {
     setStatus("JS-Fehler loadWorker: " + err.message);
+    updateWorkButtons(null);
   }
 }
 
@@ -423,4 +465,6 @@ document.addEventListener("DOMContentLoaded", () => {
   if (nameInput) {
     nameInput.addEventListener("input", saveName);
   }
+
+  updateWorkButtons(null);
 });
