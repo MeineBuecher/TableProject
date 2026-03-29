@@ -1,11 +1,11 @@
-const SUPABASE_URL = "DEINE_SUPABASE_URL";
-const SUPABASE_KEY = "DEIN_ANON_KEY";
+const SUPABASE_URL = "https://zcpdiudjhzgyqgcsawjc.supabase.co";
+const SUPABASE_KEY = "sb_publishable_PYWvX53ZCnSqCDL5iGjDgQ_VD-KN85H";
 
 const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let currentRoom = null;
 let currentChannel = null;
-let roomChannel = null;
+let currentWorkerChannel = null;
 const deviceName = "Gerät-" + Math.floor(Math.random() * 1000);
 
 function setStatus(text) {
@@ -18,41 +18,27 @@ function getParticipantsBox() {
   return document.getElementById("participantsBox");
 }
 
-function getActiveBox() {
-  return document.getElementById("activeBox");
-}
-
-// Raum erstellen
 async function createRoom() {
   try {
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
 
-    const { error } = await client.from("rooms").insert([
-      {
-        code,
-        active_name: null
-      }
-    ]);
+    const { error } = await client.from("rooms").insert([{ code }]);
 
     if (error) {
       setStatus("Fehler beim Erstellen: " + error.message);
       return;
     }
 
-    const input = document.getElementById("roomInput");
-    if (input) input.value = code;
-
+    document.getElementById("roomInput").value = code;
     await joinRoom();
   } catch (err) {
     setStatus("JS-Fehler createRoom: " + err.message);
   }
 }
 
-// Raum beitreten
 async function joinRoom() {
   try {
-    const input = document.getElementById("roomInput");
-    const code = input ? input.value.trim() : "";
+    const code = document.getElementById("roomInput").value.trim();
 
     if (!code) {
       setStatus("Bitte Raumcode eingeben");
@@ -91,15 +77,14 @@ async function joinRoom() {
     setStatus("Verbunden mit: " + code + " als " + deviceName);
 
     await loadParticipants();
-    await loadActive();
     subscribeRealtime();
-    subscribeRoomRealtime();
+    await loadWorker();
+    subscribeWorkerRealtime();
   } catch (err) {
     setStatus("JS-Fehler joinRoom: " + err.message);
   }
 }
 
-// Teilnehmer laden
 async function loadParticipants() {
   try {
     if (!currentRoom) return;
@@ -113,7 +98,6 @@ async function loadParticipants() {
     if (error) {
       const box = getParticipantsBox();
       if (box) box.innerHTML = "<p>Fehler beim Laden der Teilnehmer</p>";
-      setStatus("Ladefehler: " + error.message);
       return;
     }
 
@@ -123,17 +107,18 @@ async function loadParticipants() {
   }
 }
 
-// Teilnehmer anzeigen
 function renderParticipants(list) {
   const box = getParticipantsBox();
   if (!box) return;
 
+  let html = "<h3>Im Raum:</h3>";
+
   if (!list.length) {
-    box.innerHTML = "<h3>Im Raum:</h3><p>Noch keine Teilnehmer</p>";
+    html += "<p>Noch keine Teilnehmer</p>";
+    box.innerHTML = html;
     return;
   }
 
-  let html = "<h3>Im Raum:</h3>";
   list.forEach((p) => {
     html += `<div>${p.name}</div>`;
   });
@@ -141,68 +126,6 @@ function renderParticipants(list) {
   box.innerHTML = html;
 }
 
-// Aktiven laden
-async function loadActive() {
-  try {
-    if (!currentRoom) return;
-
-    const { data, error } = await client
-      .from("rooms")
-      .select("active_name")
-      .eq("code", currentRoom)
-      .single();
-
-    if (error) {
-      const box = getActiveBox();
-      if (box) box.innerHTML = "<p>Aktivstatus konnte nicht geladen werden</p>";
-      return;
-    }
-
-    renderActive(data?.active_name || null);
-  } catch (err) {
-    setStatus("JS-Fehler loadActive: " + err.message);
-  }
-}
-
-// Aktiven anzeigen
-function renderActive(name) {
-  const box = getActiveBox();
-  if (!box) return;
-
-  if (!name) {
-    box.innerHTML = "<h3>Aktiv:</h3><p>Niemand arbeitet gerade</p>";
-    return;
-  }
-
-  box.innerHTML = `<h3>Aktiv:</h3><div>${name}</div>`;
-}
-
-// Mich aktiv setzen
-async function setMeActive() {
-  try {
-    if (!currentRoom) {
-      setStatus("Bitte zuerst einem Raum beitreten");
-      return;
-    }
-
-    const { error } = await client
-      .from("rooms")
-      .update({ active_name: deviceName })
-      .eq("code", currentRoom);
-
-    if (error) {
-      setStatus("Aktiv-Fehler: " + error.message);
-      return;
-    }
-
-    setStatus(deviceName + " arbeitet jetzt");
-    await loadActive();
-  } catch (err) {
-    setStatus("JS-Fehler setMeActive: " + err.message);
-  }
-}
-
-// Live Updates participants
 function subscribeRealtime() {
   try {
     if (!currentRoom) return;
@@ -212,7 +135,7 @@ function subscribeRealtime() {
     }
 
     currentChannel = client
-      .channel("room-" + currentRoom + "-participants")
+      .channel("room-" + currentRoom)
       .on(
         "postgres_changes",
         {
@@ -227,35 +150,97 @@ function subscribeRealtime() {
       )
       .subscribe();
   } catch (err) {
-    setStatus("JS-Fehler realtime participants: " + err.message);
+    setStatus("JS-Fehler realtime: " + err.message);
   }
 }
 
-// Live Updates rooms
-function subscribeRoomRealtime() {
+async function workNow() {
+  try {
+    if (!currentRoom) {
+      setStatus("Bitte erst einem Raum beitreten");
+      return;
+    }
+
+    const { error: delError } = await client
+      .from("active_worker")
+      .delete()
+      .eq("room_code", currentRoom);
+
+    if (delError) {
+      setStatus("Fehler beim Zurücksetzen: " + delError.message);
+      return;
+    }
+
+    const { error } = await client.from("active_worker").insert([
+      {
+        room_code: currentRoom,
+        worker_name: deviceName
+      }
+    ]);
+
+    if (error) {
+      setStatus("Fehler beim Setzen: " + error.message);
+      return;
+    }
+
+    setStatus(deviceName + " arbeitet jetzt");
+    await loadWorker();
+  } catch (err) {
+    setStatus("JS-Fehler workNow: " + err.message);
+  }
+}
+
+async function loadWorker() {
+  try {
+    const box = document.getElementById("workerBox");
+    if (!box || !currentRoom) return;
+
+    const { data, error } = await client
+      .from("active_worker")
+      .select("*")
+      .eq("room_code", currentRoom)
+      .limit(1);
+
+    if (error) {
+      box.innerHTML = "<p>Arbeitsstatus konnte nicht geladen werden</p>";
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      box.innerHTML = "<h3>Aktiv:</h3><p>Gerade arbeitet niemand</p>";
+      return;
+    }
+
+    box.innerHTML = `<h3>Aktiv:</h3><p>${data[0].worker_name}</p>`;
+  } catch (err) {
+    setStatus("JS-Fehler loadWorker: " + err.message);
+  }
+}
+
+function subscribeWorkerRealtime() {
   try {
     if (!currentRoom) return;
 
-    if (roomChannel) {
-      client.removeChannel(roomChannel);
+    if (currentWorkerChannel) {
+      client.removeChannel(currentWorkerChannel);
     }
 
-    roomChannel = client
-      .channel("room-" + currentRoom + "-active")
+    currentWorkerChannel = client
+      .channel("worker-" + currentRoom)
       .on(
         "postgres_changes",
         {
-          event: "UPDATE",
+          event: "*",
           schema: "public",
-          table: "rooms",
-          filter: "code=eq." + currentRoom
+          table: "active_worker",
+          filter: "room_code=eq." + currentRoom
         },
         () => {
-          loadActive();
+          loadWorker();
         }
       )
       .subscribe();
   } catch (err) {
-    setStatus("JS-Fehler realtime room: " + err.message);
+    setStatus("JS-Fehler worker realtime: " + err.message);
   }
 }
