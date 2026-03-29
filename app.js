@@ -9,6 +9,7 @@ let currentParticipantStatus = null;
 let currentChannel = null;
 let currentWorkerChannel = null;
 let currentChatChannel = null;
+let currentStorageChannel = null;
 
 const SAVED_NAME_KEY = "faceproject_name";
 const SAVED_ROOM_KEY = "faceproject_room";
@@ -64,6 +65,18 @@ function getChatMessagesBox() {
 
 function getChatInput() {
   return document.getElementById("chatInput");
+}
+
+function getFilesArea() {
+  return document.getElementById("filesArea");
+}
+
+function getImagesArea() {
+  return document.getElementById("imagesArea");
+}
+
+function getTextsArea() {
+  return document.getElementById("textsArea");
 }
 
 function updateWorkButtons(activeWorkerName) {
@@ -131,6 +144,11 @@ function cleanupChannels() {
   if (currentChatChannel) {
     client.removeChannel(currentChatChannel);
     currentChatChannel = null;
+  }
+
+  if (currentStorageChannel) {
+    client.removeChannel(currentStorageChannel);
+    currentStorageChannel = null;
   }
 }
 
@@ -364,10 +382,12 @@ async function joinRoom(options = {}) {
     await loadParticipants();
     await loadWorker();
     await loadChatMessages();
+    await loadStorageItems();
 
     subscribeRealtime();
     subscribeWorkerRealtime();
     subscribeChatRealtime();
+    subscribeStorageRealtime();
   } catch (err) {
     setStatus("JS-Fehler joinRoom: " + err.message);
   }
@@ -419,6 +439,15 @@ async function leaveRoom() {
 
     const chatBox = getChatMessagesBox();
     if (chatBox) chatBox.innerHTML = "<p>Noch keine Nachrichten</p>";
+
+    const filesArea = getFilesArea();
+    if (filesArea) filesArea.innerHTML = "<p>Noch keine Dateien im Raum</p>";
+
+    const imagesArea = getImagesArea();
+    if (imagesArea) imagesArea.innerHTML = "<p>Noch keine Bilder im Raum</p>";
+
+    const textsArea = getTextsArea();
+    if (textsArea) textsArea.innerHTML = "<p>Noch keine Texte im Raum</p>";
 
     updateWorkButtons(null);
     setStatus("Du hast den Raum verlassen");
@@ -861,6 +890,83 @@ function subscribeChatRealtime() {
   }
 }
 
+async function loadStorageItems() {
+  try {
+    if (!currentRoom) return;
+
+    const { data, error } = await client
+      .from("storage_items")
+      .select("*")
+      .eq("room_code", currentRoom)
+      .order("created_at", { ascending: true });
+
+    const files = getFilesArea();
+    const images = getImagesArea();
+    const texts = getTextsArea();
+
+    if (!files || !images || !texts) return;
+
+    if (error) {
+      files.innerHTML = "<p>Fehler beim Laden</p>";
+      images.innerHTML = "<p>Fehler beim Laden</p>";
+      texts.innerHTML = "<p>Fehler beim Laden</p>";
+      return;
+    }
+
+    files.innerHTML = "";
+    images.innerHTML = "";
+    texts.innerHTML = "";
+
+    const items = data || [];
+
+    const fileItems = items.filter(item => item.type === "file");
+    const imageItems = items.filter(item => item.type === "image");
+    const textItems = items.filter(item => item.type === "text");
+
+    files.innerHTML = fileItems.length
+      ? fileItems.map(item => `<div>${item.content}</div>`).join("")
+      : "<p>Noch keine Dateien im Raum</p>";
+
+    images.innerHTML = imageItems.length
+      ? imageItems.map(item => `<div>${item.content}</div>`).join("")
+      : "<p>Noch keine Bilder im Raum</p>";
+
+    texts.innerHTML = textItems.length
+      ? textItems.map(item => `<div>${item.content}</div>`).join("")
+      : "<p>Noch keine Texte im Raum</p>";
+  } catch (err) {
+    setStatus("JS-Fehler loadStorageItems: " + err.message);
+  }
+}
+
+function subscribeStorageRealtime() {
+  try {
+    if (!currentRoom) return;
+
+    if (currentStorageChannel) {
+      client.removeChannel(currentStorageChannel);
+    }
+
+    currentStorageChannel = client
+      .channel("storage-" + currentRoom)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "storage_items",
+          filter: "room_code=eq." + currentRoom
+        },
+        () => {
+          loadStorageItems();
+        }
+      )
+      .subscribe();
+  } catch (err) {
+    setStatus("JS-Fehler storage realtime: " + err.message);
+  }
+}
+
 function clearNameOnly() {
   clearSavedName();
   const input = document.getElementById("nameInput");
@@ -905,85 +1011,105 @@ document.addEventListener("DOMContentLoaded", async () => {
     nameInput.addEventListener("input", saveName);
   }
 
+  const uploadFileBtn = document.getElementById("uploadFileBtn");
+  if (uploadFileBtn) {
+    uploadFileBtn.addEventListener("click", async () => {
+      if (!currentRoom) {
+        setStatus("Bitte erst einem Raum beitreten");
+        return;
+      }
+
+      const input = document.createElement("input");
+      input.type = "file";
+
+      input.onchange = async () => {
+        const file = input.files[0];
+        if (!file) return;
+
+        const url = URL.createObjectURL(file);
+
+        const { error } = await client.from("storage_items").insert([{
+          room_code: currentRoom,
+          type: "file",
+          content: `<a href="${url}" target="_blank">${file.name}</a>`
+        }]);
+
+        if (error) {
+          setStatus("Datei-Fehler: " + error.message);
+          return;
+        }
+
+        await loadStorageItems();
+      };
+
+      input.click();
+    });
+  }
+
+  const uploadImageBtn = document.getElementById("uploadImageBtn");
+  if (uploadImageBtn) {
+    uploadImageBtn.addEventListener("click", async () => {
+      if (!currentRoom) {
+        setStatus("Bitte erst einem Raum beitreten");
+        return;
+      }
+
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+
+      input.onchange = async () => {
+        const file = input.files[0];
+        if (!file) return;
+
+        const url = URL.createObjectURL(file);
+
+        const { error } = await client.from("storage_items").insert([{
+          room_code: currentRoom,
+          type: "image",
+          content: `<img src="${url}" style="max-width:100%">`
+        }]);
+
+        if (error) {
+          setStatus("Bild-Fehler: " + error.message);
+          return;
+        }
+
+        await loadStorageItems();
+      };
+
+      input.click();
+    });
+  }
+
+  const addTextBtn = document.getElementById("addTextBtn");
+  if (addTextBtn) {
+    addTextBtn.addEventListener("click", async () => {
+      if (!currentRoom) {
+        setStatus("Bitte erst einem Raum beitreten");
+        return;
+      }
+
+      const text = prompt("Text eingeben:");
+
+      if (!text) return;
+
+      const { error } = await client.from("storage_items").insert([{
+        room_code: currentRoom,
+        type: "text",
+        content: text
+      }]);
+
+      if (error) {
+        setStatus("Text-Fehler: " + error.message);
+        return;
+      }
+
+      await loadStorageItems();
+    });
+  }
+
   updateWorkButtons(null);
 
   await restorePreviousSession();
-});
-document.getElementById("uploadFileBtn")?.addEventListener("click", async () => {
-  const input = document.createElement("input");
-  input.type = "file";
-
-  input.onchange = async () => {
-    const file = input.files[0];
-    if (!file) return;
-
-    const url = URL.createObjectURL(file);
-
-    await client.from("storage_items").insert([{
-      room_code: currentRoom,
-      type: "file",
-      content: `<a href="${url}" target="_blank">${file.name}</a>`
-    }]);
-
-    loadStorageItems();
-  };
-
-  input.click();
-});
-document.getElementById("uploadImageBtn")?.addEventListener("click", async () => {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = "image/*";
-
-  input.onchange = async () => {
-    const file = input.files[0];
-    if (!file) return;
-
-    const url = URL.createObjectURL(file);
-
-    await client.from("storage_items").insert([{
-      room_code: currentRoom,
-      type: "image",
-      content: `<img src="${url}" style="max-width:100%">`
-    }]);
-
-    loadStorageItems();
-  };
-
-  input.click();
-});
-document.getElementById("addTextBtn")?.addEventListener("click", async () => {
-  const text = prompt("Text eingeben:");
-
-  if (!text) return;
-
-  await client.from("storage_items").insert([{
-    room_code: currentRoom,
-    type: "text",
-    content: text
-  }]);
-
-  loadStorageItems();
-});
-document.getElementById("uploadImageBtn")?.addEventListener("click", async () => {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = "image/*";
-
-  input.onchange = async () => {
-    const file = input.files[0];
-    if (!file) return;
-
-    const url = URL.createObjectURL(file);
-
-    await client.from("storage_items").insert([{
-      room_code: currentRoom,
-      type: "image",
-      content: `<img src="${url}" style="max-width:100%">`
-    }]);
-
-    loadStorageItems();
-  };
-
-  input.click();
 });
