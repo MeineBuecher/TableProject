@@ -909,3 +909,24 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   await restorePreviousSession();
 });
+document.getElementById("uploadFileBtn")?.addEventListener("click", async () => {
+  const input = document.createElement("input");
+  input.type = "file";
+
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+
+    const url = URL.createObjectURL(file);
+
+    await client.from("storage_items").insert([{
+      room_code: currentRoom,
+      type: "file",
+      content: `<a href="${url}" target="_blank">${file.name}</a>`
+    }]);
+
+    loadStorageItems();
+  };
+
+  input.click();
+});
