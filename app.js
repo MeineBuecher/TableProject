@@ -930,3 +930,60 @@ document.getElementById("uploadFileBtn")?.addEventListener("click", async () => 
 
   input.click();
 });
+document.getElementById("uploadImageBtn")?.addEventListener("click", async () => {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+
+    const url = URL.createObjectURL(file);
+
+    await client.from("storage_items").insert([{
+      room_code: currentRoom,
+      type: "image",
+      content: `<img src="${url}" style="max-width:100%">`
+    }]);
+
+    loadStorageItems();
+  };
+
+  input.click();
+});
+document.getElementById("addTextBtn")?.addEventListener("click", async () => {
+  const text = prompt("Text eingeben:");
+
+  if (!text) return;
+
+  await client.from("storage_items").insert([{
+    room_code: currentRoom,
+    type: "text",
+    content: text
+  }]);
+
+  loadStorageItems();
+});
+document.getElementById("uploadImageBtn")?.addEventListener("click", async () => {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+
+    const url = URL.createObjectURL(file);
+
+    await client.from("storage_items").insert([{
+      room_code: currentRoom,
+      type: "image",
+      content: `<img src="${url}" style="max-width:100%">`
+    }]);
+
+    loadStorageItems();
+  };
+
+  input.click();
+});
