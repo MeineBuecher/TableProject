@@ -4,11 +4,11 @@
   <meta charset="UTF-8">
   <title>FaceProject™</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+
   <div class="container">
     <img src="logo.png" class="logo" alt="FaceProject Logo">
 
@@ -18,11 +18,15 @@
 
     <button onclick="createRoom()">Raum erstellen</button>
     <button onclick="joinRoom()">Raum beitreten</button>
+    <button onclick="workNow()">Ich arbeite jetzt</button>
+    <button onclick="stopWork()">Arbeit beenden</button>
 
     <p id="status"></p>
+
+    <div id="ownerBox"></div>
     <div id="participantsBox"></div>
-<div id="workerBox"></div>
-<button onclick="workNow()">Ich arbeite jetzt</button>
+    <div id="workerBox"></div>
+    <div id="lockBox"></div>
   </div>
 
   <script src="app.js"></script>
