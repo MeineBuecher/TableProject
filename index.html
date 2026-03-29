@@ -5,13 +5,10 @@
   <title>FaceProject™</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <!-- Supabase -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
   <div class="container">
     <img src="logo.png" class="logo" alt="FaceProject Logo">
 
@@ -22,10 +19,10 @@
     <button onclick="createRoom()">Raum erstellen</button>
     <button onclick="joinRoom()">Raum beitreten</button>
 
+    <p id="status"></p>
     <div id="participantsBox"></div>
   </div>
 
   <script src="app.js"></script>
 </body>
 </html>
-
