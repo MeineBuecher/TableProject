@@ -21,6 +21,13 @@ let currentScreenOwner = null;
 let peerConnections = {};
 let handledSignalIds = new Set();
 
+const RTC_CONFIG = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" }
+  ]
+};
+
 const SAVED_NAME_KEY = "faceproject_name";
 const SAVED_ROOM_KEY = "faceproject_room";
 
@@ -1130,10 +1137,12 @@ async function loadScreenStatus() {
     if (!body) return;
 
     if (!peerConnections[activeShare.owner]) {
-      body.innerHTML = `<p>${activeShare.owner} teilt gerade seinen Bildschirm … Verbindung wird aufgebaut.</p>`;
-      await announceViewerReady(activeShare.owner);
+      body.innerHTML = `<p>${activeShare.owner} verbindet…</p>`;
+      setTimeout(() => {
+        announceViewerReady(activeShare.owner);
+      }, 500);
     } else {
-      body.innerHTML = `<p>${activeShare.owner} teilt gerade seinen Bildschirm …</p>`;
+      body.innerHTML = `<p>${activeShare.owner} verbunden</p>`;
     }
 
     updateShareButton();
@@ -1197,7 +1206,7 @@ async function announceViewerReady(ownerName) {
 }
 
 function createSenderPeerConnection(viewerName) {
-  const pc = new RTCPeerConnection();
+  const pc = new RTCPeerConnection(RTC_CONFIG);
 
   if (localScreenStream) {
     localScreenStream.getTracks().forEach(track => {
@@ -1224,7 +1233,7 @@ function createSenderPeerConnection(viewerName) {
 }
 
 function createViewerPeerConnection(ownerName) {
-  const pc = new RTCPeerConnection();
+  const pc = new RTCPeerConnection(RTC_CONFIG);
 
   pc.ontrack = (event) => {
     const stream = event.streams && event.streams[0] ? event.streams[0] : null;
@@ -1323,7 +1332,11 @@ async function handleCandidateSignal(signal) {
   try {
     await pc.addIceCandidate(new RTCIceCandidate(signal.payload));
   } catch (err) {
-    console.log("ICE candidate konnte noch nicht gesetzt werden:", err);
+    setTimeout(async () => {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(signal.payload));
+      } catch {}
+    }, 300);
   }
 }
 
@@ -1358,6 +1371,11 @@ function subscribeWebRTCSignals() {
     if (currentWebRTCChannel) {
       client.removeChannel(currentWebRTCChannel);
     }
+
+    client
+      .from("webrtc_signals")
+      .delete()
+      .eq("room_code", currentRoom);
 
     currentWebRTCChannel = client
       .channel("webrtc-" + currentRoom)
