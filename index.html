@@ -41,7 +41,6 @@
 
     <div class="workspace workspace-large">
       
-      <!-- HEADER (ohne Buttons jetzt) -->
       <div class="workspace-header">
         <div>
           <h2>Arbeitsfläche</h2>
@@ -49,47 +48,40 @@
         </div>
       </div>
 
-      <div class="workspace-main-grid">
+      <!-- 3 gleich große Bereiche nebeneinander -->
+      <div class="workspace-main-grid workspace-main-grid-three">
         
-        <div class="workspace-column">
-
-          <!-- DATEIEN -->
-          <div class="workspace-card drop-card">
-            <div class="workspace-card-header">
-              <h3>Dateien</h3>
-              <button class="workspace-action-btn" id="uploadFileBtn">+ Datei</button>
-            </div>
-            <div class="workspace-card-body drop-zone" id="filesArea">
-              <p>Noch keine Dateien im Raum</p>
-            </div>
+        <!-- DATEIEN -->
+        <div class="workspace-card drop-card equal-card">
+          <div class="workspace-card-header">
+            <h3>Dateien</h3>
+            <button class="workspace-action-btn" id="uploadFileBtn">+ Datei</button>
           </div>
-
-          <!-- TEXTE -->
-          <div class="workspace-card drop-card">
-            <div class="workspace-card-header">
-              <h3>Texte / Notizen</h3>
-              <button class="workspace-action-btn" id="addTextBtn">+ Text</button>
-            </div>
-            <div class="workspace-card-body text-area" id="textsArea">
-              <p>Noch keine Texte im Raum</p>
-            </div>
+          <div class="workspace-card-body drop-zone" id="filesArea">
+            <p>Noch keine Dateien im Raum</p>
           </div>
-
         </div>
 
-        <div class="workspace-column">
-
-          <!-- BILDER -->
-          <div class="workspace-card drop-card">
-            <div class="workspace-card-header">
-              <h3>Bilder</h3>
-              <button class="workspace-action-btn" id="uploadImageBtn">+ Bild</button>
-            </div>
-            <div class="workspace-card-body drop-zone image-area" id="imagesArea">
-              <p>Noch keine Bilder im Raum</p>
-            </div>
+        <!-- BILDER -->
+        <div class="workspace-card drop-card equal-card">
+          <div class="workspace-card-header">
+            <h3>Bilder</h3>
+            <button class="workspace-action-btn" id="uploadImageBtn">+ Bild</button>
           </div>
+          <div class="workspace-card-body drop-zone image-area" id="imagesArea">
+            <p>Noch keine Bilder im Raum</p>
+          </div>
+        </div>
 
+        <!-- TEXTE -->
+        <div class="workspace-card drop-card equal-card">
+          <div class="workspace-card-header">
+            <h3>Texte / Notizen</h3>
+            <button class="workspace-action-btn" id="addTextBtn">+ Text</button>
+          </div>
+          <div class="workspace-card-body text-area" id="textsArea">
+            <p>Noch keine Texte im Raum</p>
+          </div>
         </div>
 
       </div>
@@ -136,7 +128,7 @@
         </div>
       </div>
 
-      <!-- 🔥 NEU: CHAT -->
+      <!-- CHAT -->
       <div class="workspace-chat-block">
         <div class="workspace-card">
           <div class="workspace-card-header">
