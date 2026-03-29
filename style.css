@@ -1,39 +1,11 @@
-body {
-  margin: 0;
-  font-family: Arial, sans-serif;
-  background: #ff6a00;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 100vh;
-}
+drop table if exists public.participants;
 
-.container {
-  background: white;
-  padding: 30px;
-  border-radius: 20px;
-  text-align: center;
-  width: 320px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-}
-
-.logo {
-  width: 100px;
-  margin-bottom: 10px;
-}
-
-h1 {
-  margin-bottom: 20px;
-}
-
-input {
-  width: 100%;
-  padding: 10px;
-  margin-bottom: 10px;
-  border-radius: 10px;
-  border: 1px solid #ccc;
-}
-
+create table public.participants (
+  id uuid primary key default gen_random_uuid(),
+  room_code text not null,
+  name text not null,
+  created_at timestamptz not null default now()
+);
 button {
   width: 100%;
   padding: 10px;
