@@ -40,60 +40,66 @@
     </div>
 
     <div class="workspace workspace-large">
+      
+      <!-- HEADER (ohne Buttons jetzt) -->
       <div class="workspace-header">
         <div>
           <h2>Arbeitsfläche</h2>
           <p>Gemeinsamer Raum für Dateien, Bilder, Texte und Bildschirmfreigaben.</p>
         </div>
-        <div class="workspace-header-actions">
-          <button type="button" class="workspace-action-btn" id="uploadFileBtn">Datei hochladen</button>
-          <button type="button" class="workspace-action-btn" id="uploadImageBtn">Bild hochladen</button>
-          <button type="button" class="workspace-action-btn" id="addTextBtn">Text hinzufügen</button>
-          <button type="button" class="workspace-action-btn" id="shareScreenBtn">Bildschirm freigeben</button>
-        </div>
       </div>
 
       <div class="workspace-main-grid">
+        
         <div class="workspace-column">
+
+          <!-- DATEIEN -->
           <div class="workspace-card drop-card">
             <div class="workspace-card-header">
               <h3>Dateien</h3>
-              <span class="workspace-mini-info">Drag & Drop oder Upload</span>
+              <button class="workspace-action-btn" id="uploadFileBtn">+ Datei</button>
             </div>
             <div class="workspace-card-body drop-zone" id="filesArea">
               <p>Noch keine Dateien im Raum</p>
             </div>
           </div>
 
+          <!-- TEXTE -->
           <div class="workspace-card drop-card">
             <div class="workspace-card-header">
               <h3>Texte / Notizen</h3>
-              <span class="workspace-mini-info">Kurze Hinweise, Links, Ideen</span>
+              <button class="workspace-action-btn" id="addTextBtn">+ Text</button>
             </div>
             <div class="workspace-card-body text-area" id="textsArea">
               <p>Noch keine Texte im Raum</p>
             </div>
           </div>
+
         </div>
 
         <div class="workspace-column">
+
+          <!-- BILDER -->
           <div class="workspace-card drop-card">
             <div class="workspace-card-header">
               <h3>Bilder</h3>
-              <span class="workspace-mini-info">Direkt sichtbar im Raum</span>
+              <button class="workspace-action-btn" id="uploadImageBtn">+ Bild</button>
             </div>
             <div class="workspace-card-body drop-zone image-area" id="imagesArea">
               <p>Noch keine Bilder im Raum</p>
             </div>
           </div>
+
         </div>
+
       </div>
 
+      <!-- SCREEN -->
       <div class="workspace-screen-block">
         <div class="workspace-card">
           <div class="workspace-card-header">
             <h3>Bildschirmfreigaben</h3>
-            <span class="workspace-mini-info">1 Hauptscreen oben, 3 Vergleichs-Screens unten</span>
+            <button class="workspace-action-btn" id="shareScreenBtn">Freigeben</button>
           </div>
 
           <div class="screens-stage" id="screenArea">
@@ -126,6 +132,24 @@
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 🔥 NEU: CHAT -->
+      <div class="workspace-chat-block">
+        <div class="workspace-card">
+          <div class="workspace-card-header">
+            <h3>Chat</h3>
+          </div>
+
+          <div class="chat-messages" id="chatMessages">
+            <p>Noch keine Nachrichten</p>
+          </div>
+
+          <div class="chat-input-row">
+            <input type="text" id="chatInput" placeholder="Nachricht eingeben...">
+            <button onclick="sendChatMessage()">Senden</button>
           </div>
         </div>
       </div>
