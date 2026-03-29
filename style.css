@@ -188,17 +188,15 @@ button:disabled {
 
 .workspace-main-grid {
   display: grid;
-  grid-template-columns: 1.05fr 0.95fr;
-  gap: 18px;
-  margin-bottom: 18px;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 15px;
 }
 
 .workspace-column {
-  display: grid;
-  gap: 18px;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
 }
-
 .workspace-card {
   background: white;
   border-radius: 22px;
