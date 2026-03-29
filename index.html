@@ -1,19 +1,23 @@
 <!DOCTYPE html>
 <html lang="de">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta charset="UTF-8">
   <title>FaceProject™</title>
-  <link rel="stylesheet" href="style.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Supabase -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
+
   <div class="container">
-    <img src="logo.png" class="logo" alt="FaceProject Logo" />
+    <img src="logo.png" class="logo" alt="FaceProject Logo">
 
     <h1>FaceProject™</h1>
 
-    <input type="text" id="roomInput" placeholder="Raumcode eingeben" />
+    <input type="text" id="roomInput" placeholder="Raumcode eingeben">
 
     <button onclick="createRoom()">Raum erstellen</button>
     <button onclick="joinRoom()">Raum beitreten</button>
