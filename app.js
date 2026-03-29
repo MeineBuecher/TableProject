@@ -8,27 +8,16 @@ let currentParticipantName = null;
 let currentParticipantStatus = null;
 let currentChannel = null;
 let currentWorkerChannel = null;
+let currentChatChannel = null;
 
 const SAVED_NAME_KEY = "faceproject_name";
 const SAVED_ROOM_KEY = "faceproject_room";
 
 let screenSlots = [
-  {
-    title: "Hauptscreen",
-    content: "Keine Freigabe aktiv"
-  },
-  {
-    title: "Screen 2",
-    content: "Keine Freigabe aktiv"
-  },
-  {
-    title: "Screen 3",
-    content: "Keine Freigabe aktiv"
-  },
-  {
-    title: "Screen 4",
-    content: "Keine Freigabe aktiv"
-  }
+  { title: "Hauptscreen", content: "Keine Freigabe aktiv" },
+  { title: "Screen 2", content: "Keine Freigabe aktiv" },
+  { title: "Screen 3", content: "Keine Freigabe aktiv" },
+  { title: "Screen 4", content: "Keine Freigabe aktiv" }
 ];
 
 function setStatus(text) {
@@ -67,6 +56,14 @@ function getStopWorkButton() {
 
 function getLeaveRoomButton() {
   return document.getElementById("leaveRoomBtn");
+}
+
+function getChatMessagesBox() {
+  return document.getElementById("chatMessages");
+}
+
+function getChatInput() {
+  return document.getElementById("chatInput");
 }
 
 function updateWorkButtons(activeWorkerName) {
@@ -129,6 +126,11 @@ function cleanupChannels() {
   if (currentWorkerChannel) {
     client.removeChannel(currentWorkerChannel);
     currentWorkerChannel = null;
+  }
+
+  if (currentChatChannel) {
+    client.removeChannel(currentChatChannel);
+    currentChatChannel = null;
   }
 }
 
@@ -313,7 +315,8 @@ async function joinRoom(options = {}) {
   const { restoring = false } = options;
 
   try {
-    const code = document.getElementById("roomInput").value.trim();
+    const roomInput = document.getElementById("roomInput");
+    const code = roomInput ? roomInput.value.trim() : "";
     const name = getEnteredName();
 
     if (!name) {
@@ -360,9 +363,11 @@ async function joinRoom(options = {}) {
     await loadOwner();
     await loadParticipants();
     await loadWorker();
+    await loadChatMessages();
 
     subscribeRealtime();
     subscribeWorkerRealtime();
+    subscribeChatRealtime();
   } catch (err) {
     setStatus("JS-Fehler joinRoom: " + err.message);
   }
@@ -411,6 +416,9 @@ async function leaveRoom() {
 
     const workerBox = getWorkerBox();
     if (workerBox) workerBox.innerHTML = "<h3>Aktiv:</h3><p>Gerade arbeitet niemand</p>";
+
+    const chatBox = getChatMessagesBox();
+    if (chatBox) chatBox.innerHTML = "<p>Noch keine Nachrichten</p>";
 
     updateWorkButtons(null);
     setStatus("Du hast den Raum verlassen");
@@ -755,6 +763,104 @@ function subscribeWorkerRealtime() {
   }
 }
 
+async function sendChatMessage() {
+  try {
+    if (!currentRoom || !currentParticipantName) {
+      setStatus("Bitte erst Raum beitreten");
+      return;
+    }
+
+    const input = getChatInput();
+    if (!input) return;
+
+    const message = input.value.trim();
+
+    if (!message) return;
+
+    const { error } = await client.from("chat_messages").insert([
+      {
+        room_code: currentRoom,
+        sender_name: currentParticipantName,
+        message: message
+      }
+    ]);
+
+    if (error) {
+      setStatus("Chat-Fehler: " + error.message);
+      return;
+    }
+
+    input.value = "";
+    await loadChatMessages();
+  } catch (err) {
+    setStatus("JS-Fehler sendChatMessage: " + err.message);
+  }
+}
+
+async function loadChatMessages() {
+  try {
+    if (!currentRoom) return;
+
+    const box = getChatMessagesBox();
+    if (!box) return;
+
+    const { data, error } = await client
+      .from("chat_messages")
+      .select("*")
+      .eq("room_code", currentRoom)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      box.innerHTML = "<p>Chat konnte nicht geladen werden</p>";
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      box.innerHTML = "<p>Noch keine Nachrichten</p>";
+      return;
+    }
+
+    box.innerHTML = data.map(msg => `
+      <div class="chat-message">
+        <strong>${msg.sender_name}</strong>
+        <div>${msg.message}</div>
+      </div>
+    `).join("");
+
+    box.scrollTop = box.scrollHeight;
+  } catch (err) {
+    setStatus("JS-Fehler loadChatMessages: " + err.message);
+  }
+}
+
+function subscribeChatRealtime() {
+  try {
+    if (!currentRoom) return;
+
+    if (currentChatChannel) {
+      client.removeChannel(currentChatChannel);
+    }
+
+    currentChatChannel = client
+      .channel("chat-" + currentRoom)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "chat_messages",
+          filter: "room_code=eq." + currentRoom
+        },
+        () => {
+          loadChatMessages();
+        }
+      )
+      .subscribe();
+  } catch (err) {
+    setStatus("JS-Fehler chat realtime: " + err.message);
+  }
+}
+
 function clearNameOnly() {
   clearSavedName();
   const input = document.getElementById("nameInput");
@@ -792,6 +898,7 @@ async function restorePreviousSession() {
 document.addEventListener("DOMContentLoaded", async () => {
   loadSavedName();
   loadSavedRoom();
+  renderScreens();
 
   const nameInput = document.getElementById("nameInput");
   if (nameInput) {
