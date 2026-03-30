@@ -19,6 +19,10 @@ let localScreenStream = null;
 let isSharingScreen = false;
 let currentScreenOwner = null;
 
+// Mehrfach-Screens
+let localSharedScreens = {};
+let remoteScreenStreams = {};
+
 // WebRTC
 let peerConnections = {};
 let handledSignalIds = new Set();
@@ -34,10 +38,10 @@ const SAVED_NAME_KEY = "faceproject_name";
 const SAVED_ROOM_KEY = "faceproject_room";
 
 let screenSlots = [
-  { title: "Hauptscreen", content: "Keine Freigabe aktiv" },
-  { title: "Screen 2", content: "Keine Freigabe aktiv" },
-  { title: "Screen 3", content: "Keine Freigabe aktiv" },
-  { title: "Screen 4", content: "Keine Freigabe aktiv" }
+  { title: "Hauptscreen", owner: null, stream: null, active: false },
+  { title: "Screen 2", owner: null, stream: null, active: false },
+  { title: "Screen 3", owner: null, stream: null, active: false },
+  { title: "Screen 4", owner: null, stream: null, active: false }
 ];
 
 function setStatus(text) {
@@ -202,7 +206,7 @@ function updateShareButton() {
   }
 
   btn.disabled = false;
-  btn.textContent = isSharingScreen ? "Freigabe beenden" : "Freigeben";
+  btn.textContent = "Freigeben / Beenden";
 }
 
 function closeAllPeerConnections() {
@@ -305,32 +309,91 @@ function getEnteredName() {
   return name;
 }
 
+function getScreenTitleByIndex(index) {
+  if (index === 0) return "Hauptscreen";
+  return "Screen " + (index + 1);
+}
+
+function resetScreenSlots() {
+  screenSlots = [
+    { title: "Hauptscreen", owner: null, stream: null, active: false },
+    { title: "Screen 2", owner: null, stream: null, active: false },
+    { title: "Screen 3", owner: null, stream: null, active: false },
+    { title: "Screen 4", owner: null, stream: null, active: false }
+  ];
+}
+
+function getScreenBoxes() {
+  return [
+    document.getElementById("primaryScreen"),
+    document.getElementById("screenThumb1"),
+    document.getElementById("screenThumb2"),
+    document.getElementById("screenThumb3")
+  ];
+}
+
+function attachStreamToScreenBox(box, stream, labelText) {
+  if (!box) return;
+
+  const header = box.querySelector(".screen-slot-header");
+  const body = box.querySelector(".screen-slot-body");
+
+  if (header) {
+    header.textContent = labelText || "";
+  }
+
+  if (!body) return;
+
+  body.innerHTML = "";
+
+  const video = document.createElement("video");
+  video.srcObject = stream;
+  video.autoplay = true;
+  video.playsInline = true;
+  video.muted = true;
+  video.style.width = "100%";
+  video.style.height = "100%";
+  video.style.objectFit = "contain";
+  video.style.borderRadius = "12px";
+
+  body.appendChild(video);
+}
+
+function attachPlaceholderToScreenBox(box, title, text) {
+  if (!box) return;
+
+  const header = box.querySelector(".screen-slot-header");
+  const body = box.querySelector(".screen-slot-body");
+
+  if (header) {
+    header.textContent = title;
+  }
+
+  if (body) {
+    body.innerHTML = `<p>${escapeHtml(text)}</p>`;
+  }
+}
+
 function renderScreens() {
-  const primary = document.getElementById("primaryScreen");
-  const thumb1 = document.getElementById("screenThumb1");
-  const thumb2 = document.getElementById("screenThumb2");
-  const thumb3 = document.getElementById("screenThumb3");
-
-  if (!primary || !thumb1 || !thumb2 || !thumb3) return;
-
-  const boxes = [primary, thumb1, thumb2, thumb3];
+  const boxes = getScreenBoxes();
+  if (boxes.some(box => !box)) return;
 
   boxes.forEach((box, index) => {
-    const header = box.querySelector(".screen-slot-header");
-    const body = box.querySelector(".screen-slot-body");
-
-    if (header) {
-      header.textContent = screenSlots[index].title;
-    }
-
-    if (body) {
-      body.innerHTML = `<p>${escapeHtml(screenSlots[index].content)}</p>`;
-    }
-
+    const slot = screenSlots[index];
     box.classList.remove("screen-active");
+
+    if (slot.active && slot.stream) {
+      const ownerText = slot.owner ? ` – ${slot.owner}` : "";
+      attachStreamToScreenBox(box, slot.stream, `${slot.title}${ownerText}`);
+    } else if (slot.active && !slot.stream) {
+      const ownerText = slot.owner ? `${slot.owner} verbindet…` : "Verbindet…";
+      attachPlaceholderToScreenBox(box, slot.title, ownerText);
+    } else {
+      attachPlaceholderToScreenBox(box, slot.title, "Keine Freigabe aktiv");
+    }
   });
 
-  primary.classList.add("screen-active");
+  boxes[0].classList.add("screen-active");
 }
 
 function promoteScreen(index) {
@@ -600,8 +663,8 @@ async function leaveRoom() {
       }
     }
 
-    if (isSharingScreen) {
-      await stopScreenShare(true);
+    for (const key of Object.keys(localSharedScreens)) {
+      await stopScreenShare(Number(key), true);
     }
 
     await upsertParticipantStatus("verlassen");
@@ -612,6 +675,11 @@ async function leaveRoom() {
     currentParticipantName = null;
     currentParticipantStatus = null;
     currentScreenOwner = null;
+    localScreenStream = null;
+    isSharingScreen = false;
+    localSharedScreens = {};
+    remoteScreenStreams = {};
+    resetScreenSlots();
     clearSavedRoom();
 
     const ownerBox = getOwnerBox();
@@ -820,10 +888,6 @@ async function pauseWork() {
       return;
     }
 
-    if (isSharingScreen) {
-      await stopScreenShare(true);
-    }
-
     await upsertParticipantStatus("pausiert");
 
     const { data: active, error: activeError } = await client
@@ -905,10 +969,6 @@ async function stopWork() {
       setStatus("Nur " + currentWorker + " kann die Arbeit beenden");
       await loadWorker();
       return;
-    }
-
-    if (isSharingScreen) {
-      await stopScreenShare(true);
     }
 
     const { error: deleteError } = await client
@@ -1274,103 +1334,89 @@ function subscribeStorageRealtime() {
 
 /* ================= SCREEN SHARE ================= */
 
-function showLocalScreen(stream) {
-  const primary = document.getElementById("primaryScreen");
-  if (!primary) return;
-
-  const body = primary.querySelector(".screen-slot-body");
-  if (!body) return;
-
-  const video = document.createElement("video");
-  video.srcObject = stream;
-  video.autoplay = true;
-  video.playsInline = true;
-  video.muted = true;
-  video.style.width = "100%";
-  video.style.height = "100%";
-  video.style.objectFit = "contain";
-  video.style.borderRadius = "12px";
-
-  body.innerHTML = "";
-  body.appendChild(video);
-}
-
-function showRemoteScreen(stream) {
-  const primary = document.getElementById("primaryScreen");
-  if (!primary) return;
-
-  const body = primary.querySelector(".screen-slot-body");
-  if (!body) return;
-
-  const video = document.createElement("video");
-  video.srcObject = stream;
-  video.autoplay = true;
-  video.playsInline = true;
-  video.muted = true;
-  video.style.width = "100%";
-  video.style.height = "100%";
-  video.style.objectFit = "contain";
-  video.style.borderRadius = "12px";
-
-  body.innerHTML = "";
-  body.appendChild(video);
+function syncLegacyScreenFlags() {
+  const slotIndexes = Object.keys(localSharedScreens);
+  isSharingScreen = slotIndexes.length > 0;
+  if (isSharingScreen) {
+    const firstSlot = Number(slotIndexes[0]);
+    localScreenStream = localSharedScreens[firstSlot]?.stream || null;
+    currentScreenOwner = currentParticipantName;
+  } else {
+    localScreenStream = null;
+    currentScreenOwner = null;
+  }
 }
 
 async function loadScreenStatus() {
   try {
     if (!currentRoom) return;
 
-    if (isSharingScreen && localScreenStream) {
-      currentScreenOwner = currentParticipantName;
-      updateShareButton();
-      return;
-    }
-
     const { data, error } = await client
       .from("screen_share")
       .select("*")
       .eq("room_code", currentRoom)
       .eq("active", true)
-      .order("created_at", { ascending: false });
+      .order("slot_index", { ascending: true });
 
     if (error) {
       setStatus("Screen-Status Fehler: " + error.message);
       return;
     }
 
-    const activeShare = data && data.length > 0 ? data[0] : null;
+    const activeShares = data || [];
+    const activeKeys = new Set(activeShares.map(share => `${share.owner}_${share.slot_index}`));
 
-    if (!activeShare) {
-      currentScreenOwner = null;
-      renderScreens();
-      closeAllPeerConnections();
-      updateShareButton();
-      return;
+    Object.keys(remoteScreenStreams).forEach(key => {
+      if (!activeKeys.has(key)) {
+        delete remoteScreenStreams[key];
+      }
+    });
+
+    Object.keys(peerConnections).forEach(key => {
+      const isLocalSenderConnection = Object.keys(localSharedScreens).some(slotIndex => key.endsWith(`_${slotIndex}`));
+      if (!activeKeys.has(key) && !isLocalSenderConnection) {
+        try {
+          peerConnections[key].close();
+        } catch {}
+        delete peerConnections[key];
+      }
+    });
+
+    resetScreenSlots();
+
+    for (let i = 0; i < 4; i++) {
+      const share = activeShares.find(row => Number(row.slot_index) === i);
+      if (!share) continue;
+
+      screenSlots[i].title = getScreenTitleByIndex(i);
+      screenSlots[i].owner = share.owner;
+      screenSlots[i].active = true;
+
+      if (share.owner === currentParticipantName && localSharedScreens[i]?.stream) {
+        screenSlots[i].stream = localSharedScreens[i].stream;
+      } else {
+        const remoteKey = `${share.owner}_${i}`;
+        screenSlots[i].stream = remoteScreenStreams[remoteKey] || null;
+      }
     }
 
-    currentScreenOwner = activeShare.owner;
+    renderScreens();
 
-    if (activeShare.owner === currentParticipantName && isSharingScreen && localScreenStream) {
-      showLocalScreen(localScreenStream);
-      updateShareButton();
-      return;
+    for (let i = 0; i < 4; i++) {
+      const share = activeShares.find(row => Number(row.slot_index) === i);
+      if (!share) continue;
+
+      if (share.owner !== currentParticipantName) {
+        const key = `${share.owner}_${i}`;
+        if (!peerConnections[key]) {
+          setTimeout(() => {
+            announceViewerReady(share.owner, i);
+          }, 300);
+        }
+      }
     }
 
-    const primary = document.getElementById("primaryScreen");
-    if (!primary) return;
-
-    const body = primary.querySelector(".screen-slot-body");
-    if (!body) return;
-
-    if (!peerConnections[activeShare.owner]) {
-      body.innerHTML = `<p>${escapeHtml(activeShare.owner)} verbindet…</p>`;
-      setTimeout(() => {
-        announceViewerReady(activeShare.owner);
-      }, 500);
-    } else {
-      body.innerHTML = `<p>${escapeHtml(activeShare.owner)} verbunden</p>`;
-    }
-
+    syncLegacyScreenFlags();
     updateShareButton();
   } catch (err) {
     setStatus("JS-Fehler loadScreenStatus: " + err.message);
@@ -1407,14 +1453,14 @@ function subscribeScreenRealtime() {
 
 /* ================= WEBRTC ================= */
 
-function createPeerConnectionKey(name) {
-  return name;
+function createPeerConnectionKey(name, slotIndex) {
+  return `${name}_${slotIndex}`;
 }
 
-async function announceViewerReady(ownerName) {
+async function announceViewerReady(ownerName, slotIndex) {
   if (!currentRoom || !currentParticipantName || !ownerName) return;
   if (ownerName === currentParticipantName) return;
-  if (peerConnections[createPeerConnectionKey(ownerName)]) return;
+  if (peerConnections[createPeerConnectionKey(ownerName, slotIndex)]) return;
 
   const { error } = await client.from("webrtc_signals").insert([
     {
@@ -1422,7 +1468,10 @@ async function announceViewerReady(ownerName) {
       sender: currentParticipantName,
       target: ownerName,
       type: "viewer_ready",
-      payload: { viewer: currentParticipantName }
+      payload: {
+        viewer: currentParticipantName,
+        slot_index: slotIndex
+      }
     }
   ]);
 
@@ -1431,12 +1480,14 @@ async function announceViewerReady(ownerName) {
   }
 }
 
-function createSenderPeerConnection(viewerName) {
+function createSenderPeerConnection(viewerName, slotIndex) {
   const pc = new RTCPeerConnection(RTC_CONFIG);
+  const key = createPeerConnectionKey(viewerName, slotIndex);
+  const localEntry = localSharedScreens[slotIndex];
 
-  if (localScreenStream) {
-    localScreenStream.getTracks().forEach(track => {
-      pc.addTrack(track, localScreenStream);
+  if (localEntry && localEntry.stream) {
+    localEntry.stream.getTracks().forEach(track => {
+      pc.addTrack(track, localEntry.stream);
     });
   }
 
@@ -1449,22 +1500,35 @@ function createSenderPeerConnection(viewerName) {
         sender: currentParticipantName,
         target: viewerName,
         type: "candidate",
-        payload: event.candidate
+        payload: {
+          candidate: event.candidate,
+          slot_index: slotIndex
+        }
       }
     ]);
   };
 
-  peerConnections[createPeerConnectionKey(viewerName)] = pc;
+  peerConnections[key] = pc;
   return pc;
 }
 
-function createViewerPeerConnection(ownerName) {
+function createViewerPeerConnection(ownerName, slotIndex) {
   const pc = new RTCPeerConnection(RTC_CONFIG);
+  const key = createPeerConnectionKey(ownerName, slotIndex);
 
   pc.ontrack = (event) => {
     const stream = event.streams && event.streams[0] ? event.streams[0] : null;
     if (stream) {
-      showRemoteScreen(stream);
+      remoteScreenStreams[key] = stream;
+
+      if (screenSlots[slotIndex]) {
+        screenSlots[slotIndex].stream = stream;
+        screenSlots[slotIndex].active = true;
+        screenSlots[slotIndex].owner = ownerName;
+        screenSlots[slotIndex].title = getScreenTitleByIndex(slotIndex);
+      }
+
+      renderScreens();
     }
   };
 
@@ -1477,24 +1541,31 @@ function createViewerPeerConnection(ownerName) {
         sender: currentParticipantName,
         target: ownerName,
         type: "candidate",
-        payload: event.candidate
+        payload: {
+          candidate: event.candidate,
+          slot_index: slotIndex
+        }
       }
     ]);
   };
 
-  peerConnections[createPeerConnectionKey(ownerName)] = pc;
+  peerConnections[key] = pc;
   return pc;
 }
 
 async function handleViewerReadySignal(signal) {
-  if (!isSharingScreen || !localScreenStream) return;
   if (signal.target !== currentParticipantName) return;
 
   const viewerName = signal.sender;
-  let pc = peerConnections[createPeerConnectionKey(viewerName)];
+  const slotIndex = signal.payload?.slot_index;
+
+  if (slotIndex === undefined || slotIndex === null) return;
+  if (!localSharedScreens[slotIndex]?.stream) return;
+
+  let pc = peerConnections[createPeerConnectionKey(viewerName, slotIndex)];
 
   if (!pc) {
-    pc = createSenderPeerConnection(viewerName);
+    pc = createSenderPeerConnection(viewerName, slotIndex);
   }
 
   const offer = await pc.createOffer();
@@ -1506,7 +1577,10 @@ async function handleViewerReadySignal(signal) {
       sender: currentParticipantName,
       target: viewerName,
       type: "offer",
-      payload: offer
+      payload: {
+        offer,
+        slot_index: slotIndex
+      }
     }
   ]);
 }
@@ -1515,14 +1589,19 @@ async function handleOfferSignal(signal) {
   if (signal.target !== currentParticipantName) return;
   if (signal.sender === currentParticipantName) return;
 
+  const slotIndex = signal.payload?.slot_index;
+  const offer = signal.payload?.offer;
+
+  if (slotIndex === undefined || !offer) return;
+
   currentScreenOwner = signal.sender;
 
-  let pc = peerConnections[createPeerConnectionKey(signal.sender)];
+  let pc = peerConnections[createPeerConnectionKey(signal.sender, slotIndex)];
   if (!pc) {
-    pc = createViewerPeerConnection(signal.sender);
+    pc = createViewerPeerConnection(signal.sender, slotIndex);
   }
 
-  await pc.setRemoteDescription(new RTCSessionDescription(signal.payload));
+  await pc.setRemoteDescription(new RTCSessionDescription(offer));
 
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
@@ -1533,7 +1612,10 @@ async function handleOfferSignal(signal) {
       sender: currentParticipantName,
       target: signal.sender,
       type: "answer",
-      payload: answer
+      payload: {
+        answer,
+        slot_index: slotIndex
+      }
     }
   ]);
 }
@@ -1541,26 +1623,36 @@ async function handleOfferSignal(signal) {
 async function handleAnswerSignal(signal) {
   if (signal.target !== currentParticipantName) return;
 
+  const slotIndex = signal.payload?.slot_index;
+  const answer = signal.payload?.answer;
   const viewerName = signal.sender;
-  const pc = peerConnections[createPeerConnectionKey(viewerName)];
+
+  if (slotIndex === undefined || !answer) return;
+
+  const pc = peerConnections[createPeerConnectionKey(viewerName, slotIndex)];
   if (!pc) return;
 
-  await pc.setRemoteDescription(new RTCSessionDescription(signal.payload));
+  await pc.setRemoteDescription(new RTCSessionDescription(answer));
 }
 
 async function handleCandidateSignal(signal) {
   if (signal.target !== currentParticipantName) return;
 
+  const slotIndex = signal.payload?.slot_index;
+  const candidate = signal.payload?.candidate;
   const peerName = signal.sender;
-  const pc = peerConnections[createPeerConnectionKey(peerName)];
+
+  if (slotIndex === undefined || !candidate) return;
+
+  const pc = peerConnections[createPeerConnectionKey(peerName, slotIndex)];
   if (!pc) return;
 
   try {
-    await pc.addIceCandidate(new RTCIceCandidate(signal.payload));
+    await pc.addIceCandidate(new RTCIceCandidate(candidate));
   } catch (err) {
     setTimeout(async () => {
       try {
-        await pc.addIceCandidate(new RTCIceCandidate(signal.payload));
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
       } catch {}
     }, 300);
   }
@@ -1624,61 +1716,65 @@ function subscribeWebRTCSignals() {
   }
 }
 
-async function startScreenShare() {
+async function startScreenShare(slotIndex = null) {
   try {
     if (!currentRoom || !currentParticipantName) {
       setStatus("Bitte erst Raum und Namen festlegen");
       return;
     }
 
-    if (currentParticipantStatus === "pausiert") {
-      setStatus("Du hast den Raum pausiert. Bitte zuerst Raum fortsetzen.");
+    if (slotIndex === null) {
+      const input = prompt("Welchen Screen belegen? 1 bis 4", "1");
+      if (!input) return;
+
+      const parsed = parseInt(input, 10);
+      if (isNaN(parsed) || parsed < 1 || parsed > 4) {
+        setStatus("Bitte 1 bis 4 eingeben");
+        return;
+      }
+
+      slotIndex = parsed - 1;
+    }
+
+    const existingLocal = localSharedScreens[slotIndex];
+    if (existingLocal?.stream) {
+      setStatus("Dieser Slot wird von dir bereits geteilt");
       return;
     }
 
-    const { data: activeWorkerRows, error: workerError } = await client
-      .from("active_worker")
-      .select("*")
-      .eq("room_code", currentRoom)
-      .order("created_at", { ascending: false });
-
-    if (workerError) {
-      setStatus("Fehler beim Prüfen: " + workerError.message);
-      return;
-    }
-
-    if (!activeWorkerRows || activeWorkerRows.length === 0) {
-      setStatus("Nur der aktive Bearbeiter darf den Bildschirm teilen");
-      return;
-    }
-
-    const activeWorkerName = activeWorkerRows[0].worker_name;
-    if (activeWorkerName !== currentParticipantName) {
-      setStatus("Nur " + activeWorkerName + " darf den Bildschirm teilen");
-      return;
-    }
-
-    localScreenStream = await navigator.mediaDevices.getDisplayMedia({
+    const localStream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
       audio: false
     });
 
-    isSharingScreen = true;
-    currentScreenOwner = currentParticipantName;
-    updateShareButton();
-    showLocalScreen(localScreenStream);
+    localSharedScreens[slotIndex] = {
+      stream: localStream
+    };
 
-    const videoTrack = localScreenStream.getVideoTracks()[0];
+    screenSlots[slotIndex] = {
+      title: getScreenTitleByIndex(slotIndex),
+      owner: currentParticipantName,
+      stream: localStream,
+      active: true
+    };
+
+    renderScreens();
+    syncLegacyScreenFlags();
+    updateShareButton();
+
+    const videoTrack = localStream.getVideoTracks()[0];
     if (videoTrack) {
       videoTrack.addEventListener("ended", () => {
-        stopScreenShare(true);
+        stopScreenShare(slotIndex, true);
       });
     }
 
     await client
       .from("screen_share")
       .delete()
-      .eq("room_code", currentRoom);
+      .eq("room_code", currentRoom)
+      .eq("owner", currentParticipantName)
+      .eq("slot_index", slotIndex);
 
     const { error: insertError } = await client
       .from("screen_share")
@@ -1686,6 +1782,7 @@ async function startScreenShare() {
         {
           room_code: currentRoom,
           owner: currentParticipantName,
+          slot_index: slotIndex,
           active: true
         }
       ]);
@@ -1695,38 +1792,71 @@ async function startScreenShare() {
       return;
     }
 
-    setStatus("Bildschirm wird geteilt");
+    setStatus(`Bildschirm auf Slot ${slotIndex + 1} wird geteilt`);
   } catch (err) {
     setStatus("Screen Fehler: " + err.message);
   }
 }
 
-async function stopScreenShare(silent = false) {
+async function stopScreenShare(slotIndex = null, silent = false) {
   try {
-    if (localScreenStream) {
-      localScreenStream.getTracks().forEach(track => track.stop());
-      localScreenStream = null;
+    if (slotIndex === null) {
+      const input = prompt("Welchen Screen beenden? 1 bis 4", "1");
+      if (!input) return;
+
+      const parsed = parseInt(input, 10);
+      if (isNaN(parsed) || parsed < 1 || parsed > 4) {
+        setStatus("Bitte 1 bis 4 eingeben");
+        return;
+      }
+
+      slotIndex = parsed - 1;
     }
 
-    isSharingScreen = false;
-    currentScreenOwner = null;
+    const localEntry = localSharedScreens[slotIndex];
+    if (localEntry?.stream) {
+      localEntry.stream.getTracks().forEach(track => track.stop());
+      delete localSharedScreens[slotIndex];
+    }
 
-    closeAllPeerConnections();
+    screenSlots[slotIndex] = {
+      title: getScreenTitleByIndex(slotIndex),
+      owner: null,
+      stream: null,
+      active: false
+    };
 
-    if (currentRoom) {
+    Object.keys(peerConnections).forEach(key => {
+      if (key.endsWith(`_${slotIndex}`)) {
+        try {
+          peerConnections[key].close();
+        } catch {}
+        delete peerConnections[key];
+      }
+    });
+
+    Object.keys(remoteScreenStreams).forEach(key => {
+      if (key.endsWith(`_${slotIndex}`)) {
+        delete remoteScreenStreams[key];
+      }
+    });
+
+    if (currentRoom && currentParticipantName) {
       await client
         .from("screen_share")
         .delete()
         .eq("room_code", currentRoom)
-        .eq("owner", currentParticipantName);
+        .eq("owner", currentParticipantName)
+        .eq("slot_index", slotIndex);
     }
 
     renderScreens();
+    syncLegacyScreenFlags();
     await loadScreenStatus();
     updateShareButton();
 
     if (!silent) {
-      setStatus("Bildschirmfreigabe beendet");
+      setStatus(`Bildschirmfreigabe auf Slot ${slotIndex + 1} beendet`);
     }
   } catch (err) {
     setStatus("JS-Fehler stopScreenShare: " + err.message);
@@ -1734,10 +1864,21 @@ async function stopScreenShare(silent = false) {
 }
 
 async function toggleScreenShare() {
-  if (isSharingScreen) {
-    await stopScreenShare();
+  const input = prompt("Screen wählen: 1 bis 4", "1");
+  if (!input) return;
+
+  const parsed = parseInt(input, 10);
+  if (isNaN(parsed) || parsed < 1 || parsed > 4) {
+    setStatus("Bitte 1 bis 4 eingeben");
+    return;
+  }
+
+  const slotIndex = parsed - 1;
+
+  if (localSharedScreens[slotIndex]?.stream) {
+    await stopScreenShare(slotIndex);
   } else {
-    await startScreenShare();
+    await startScreenShare(slotIndex);
   }
 }
 
