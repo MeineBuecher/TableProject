@@ -44,6 +44,13 @@ function setStatus(text) {
   console.log(text);
 }
 
+function isMissingTableError(error, tableName) {
+  if (!error || !error.message) return false;
+  return error.message.includes(`Could not find the table 'public.${tableName}'`) ||
+         error.message.includes(`relation "public.${tableName}" does not exist`) ||
+         error.message.includes(`relation "${tableName}" does not exist`);
+}
+
 function getParticipantsBox() {
   return document.getElementById("participantsBox");
 }
@@ -986,6 +993,13 @@ async function loadStorageItems() {
     if (!files || !images || !texts) return;
 
     if (error) {
+      if (isMissingTableError(error, "storage_items")) {
+        files.innerHTML = "<p>Tabelle storage_items fehlt</p>";
+        images.innerHTML = "<p>Tabelle storage_items fehlt</p>";
+        texts.innerHTML = "<p>Tabelle storage_items fehlt</p>";
+        return;
+      }
+
       files.innerHTML = "<p>Fehler beim Laden</p>";
       images.innerHTML = "<p>Fehler beim Laden</p>";
       texts.innerHTML = "<p>Fehler beim Laden</p>";
@@ -1138,6 +1152,7 @@ async function loadScreenStatus() {
 
     if (!peerConnections[activeShare.owner]) {
       body.innerHTML = `<p>${activeShare.owner} verbindet…</p>`;
+
       setTimeout(() => {
         announceViewerReady(activeShare.owner);
       }, 500);
@@ -1584,6 +1599,11 @@ document.addEventListener("DOMContentLoaded", async () => {
         }]);
 
         if (error) {
+          if (isMissingTableError(error, "storage_items")) {
+            setStatus("Tabelle storage_items fehlt in Supabase");
+            return;
+          }
+
           setStatus("Datei-Fehler: " + error.message);
           return;
         }
@@ -1620,6 +1640,11 @@ document.addEventListener("DOMContentLoaded", async () => {
         }]);
 
         if (error) {
+          if (isMissingTableError(error, "storage_items")) {
+            setStatus("Tabelle storage_items fehlt in Supabase");
+            return;
+          }
+
           setStatus("Bild-Fehler: " + error.message);
           return;
         }
@@ -1650,6 +1675,11 @@ document.addEventListener("DOMContentLoaded", async () => {
       }]);
 
       if (error) {
+        if (isMissingTableError(error, "storage_items")) {
+          setStatus("Tabelle storage_items fehlt in Supabase");
+          return;
+        }
+
         setStatus("Text-Fehler: " + error.message);
         return;
       }
