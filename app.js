@@ -16,6 +16,7 @@ let currentWebRTCChannel = null;
 let localScreenStream = null;
 let isSharingScreen = false;
 let currentScreenOwner = null;
+let currentRoomOwnerName = null;
 
 // WebRTC
 let peerConnections = {};
@@ -49,6 +50,16 @@ function isMissingTableError(error, tableName) {
   return error.message.includes(`Could not find the table 'public.${tableName}'`) ||
          error.message.includes(`relation "public.${tableName}" does not exist`) ||
          error.message.includes(`relation "${tableName}" does not exist`);
+}
+
+function escapeHtml(text) {
+  if (text === null || text === undefined) return "";
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function getParticipantsBox() {
@@ -105,6 +116,12 @@ function getTextsArea() {
 
 function getShareScreenBtn() {
   return document.getElementById("shareScreenBtn");
+}
+
+function isCurrentUserRoomOwner() {
+  return !!currentParticipantName &&
+         !!currentRoomOwnerName &&
+         currentParticipantName === currentRoomOwnerName;
 }
 
 function updateWorkButtons(activeWorkerName) {
@@ -431,6 +448,7 @@ async function joinRoom(options = {}) {
 
     currentRoom = code;
     currentParticipantName = name;
+    currentRoomOwnerName = data[0].owner_name || null;
 
     saveRoomSession(code);
 
@@ -500,6 +518,7 @@ async function leaveRoom() {
     currentParticipantName = null;
     currentParticipantStatus = null;
     currentScreenOwner = null;
+    currentRoomOwnerName = null;
     clearSavedRoom();
 
     const ownerBox = getOwnerBox();
@@ -546,11 +565,13 @@ async function loadOwner() {
       .limit(1);
 
     if (error || !data || data.length === 0) {
+      currentRoomOwnerName = null;
       box.innerHTML = "<strong>Raumersteller:</strong><br>Unbekannt";
       return;
     }
 
-    box.innerHTML = `<strong>Raumersteller:</strong><br>${data[0].owner_name || "Unbekannt"}`;
+    currentRoomOwnerName = data[0].owner_name || null;
+    box.innerHTML = `<strong>Raumersteller:</strong><br>${currentRoomOwnerName || "Unbekannt"}`;
   } catch (err) {
     setStatus("JS-Fehler loadOwner: " + err.message);
   }
@@ -937,8 +958,8 @@ async function loadChatMessages() {
 
     box.innerHTML = data.map(msg => `
       <div class="chat-message">
-        <strong>${msg.sender_name}</strong>
-        <div>${msg.message}</div>
+        <strong>${escapeHtml(msg.sender_name)}</strong>
+        <div>${escapeHtml(msg.message)}</div>
       </div>
     `).join("");
 
@@ -975,6 +996,78 @@ function subscribeChatRealtime() {
     setStatus("JS-Fehler chat realtime: " + err.message);
   }
 }
+
+function buildDeleteButton(itemId) {
+  if (!isCurrentUserRoomOwner()) return "";
+  return `
+    <button
+      type="button"
+      class="workspace-delete-btn"
+      onclick="deleteStorageItem('${itemId}')"
+      style="margin-top:8px;background:#c62828;color:#fff;border:none;border-radius:10px;padding:8px 10px;cursor:pointer;width:auto;"
+    >
+      Löschen
+    </button>
+  `;
+}
+
+function buildStorageItemHtml(item) {
+  const deleteBtn = buildDeleteButton(item.id);
+
+  if (item.type === "file") {
+    const safeContent = item.content || "";
+    return `<div class="storage-item">${safeContent}${deleteBtn}</div>`;
+  }
+
+  if (item.type === "image") {
+    const safeContent = item.content || "";
+    return `<div class="storage-item">${safeContent}${deleteBtn}</div>`;
+  }
+
+  return `
+    <div class="storage-item" style="width:100%;">
+      <div>${escapeHtml(item.content)}</div>
+      ${deleteBtn}
+    </div>
+  `;
+}
+
+async function deleteStorageItem(itemId) {
+  try {
+    if (!currentRoom || !currentParticipantName) {
+      setStatus("Bitte erst Raum beitreten");
+      return;
+    }
+
+    if (!isCurrentUserRoomOwner()) {
+      setStatus("Nur der Raumersteller darf Einträge löschen");
+      return;
+    }
+
+    const { error } = await client
+      .from("storage_items")
+      .delete()
+      .eq("id", itemId)
+      .eq("room_code", currentRoom);
+
+    if (error) {
+      if (isMissingTableError(error, "storage_items")) {
+        setStatus("Tabelle storage_items fehlt in Supabase");
+        return;
+      }
+
+      setStatus("Lösch-Fehler: " + error.message);
+      return;
+    }
+
+    setStatus("Eintrag wurde gelöscht");
+    await loadStorageItems();
+  } catch (err) {
+    setStatus("JS-Fehler deleteStorageItem: " + err.message);
+  }
+}
+
+window.deleteStorageItem = deleteStorageItem;
 
 async function loadStorageItems() {
   try {
@@ -1017,15 +1110,15 @@ async function loadStorageItems() {
     const textItems = items.filter(item => item.type === "text");
 
     files.innerHTML = fileItems.length
-      ? fileItems.map(item => `<div>${item.content}</div>`).join("")
+      ? fileItems.map(item => buildStorageItemHtml(item)).join("")
       : "<p>Noch keine Dateien im Raum</p>";
 
     images.innerHTML = imageItems.length
-      ? imageItems.map(item => `<div>${item.content}</div>`).join("")
+      ? imageItems.map(item => buildStorageItemHtml(item)).join("")
       : "<p>Noch keine Bilder im Raum</p>";
 
     texts.innerHTML = textItems.length
-      ? textItems.map(item => `<div>${item.content}</div>`).join("")
+      ? textItems.map(item => buildStorageItemHtml(item)).join("")
       : "<p>Noch keine Texte im Raum</p>";
   } catch (err) {
     setStatus("JS-Fehler loadStorageItems: " + err.message);
@@ -1595,7 +1688,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         const { error } = await client.from("storage_items").insert([{
           room_code: currentRoom,
           type: "file",
-          content: `<a href="${url}" target="_blank">${file.name}</a>`
+          content: `<a href="${url}" target="_blank" rel="noopener noreferrer">${escapeHtml(file.name)}</a>`
         }]);
 
         if (error) {
@@ -1636,7 +1729,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         const { error } = await client.from("storage_items").insert([{
           room_code: currentRoom,
           type: "image",
-          content: `<img src="${url}" style="max-width:100%">`
+          content: `<img src="${url}" alt="${escapeHtml(file.name)}" style="max-width:100%;border-radius:10px;">`
         }]);
 
         if (error) {
