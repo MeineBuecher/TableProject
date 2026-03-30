@@ -6,6 +6,7 @@ const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const STORAGE_BUCKET = "faceproject-files";
 
 let currentRoom = null;
+let currentRoomOwner = null;
 let currentParticipantName = null;
 let currentParticipantStatus = null;
 let currentChannel = null;
@@ -14,6 +15,7 @@ let currentChatChannel = null;
 let currentStorageChannel = null;
 let currentScreenChannel = null;
 let currentWebRTCChannel = null;
+let currentExpertChannel = null;
 
 let localScreenStream = null;
 let isSharingScreen = false;
@@ -22,6 +24,13 @@ let currentScreenOwner = null;
 // Mehrfach-Screens
 let localSharedScreens = {};
 let remoteScreenStreams = {};
+
+// Experten
+let currentRole = "participant"; // owner | expert | participant
+let currentExpertInviteToken = null;
+let currentExpertInviteLink = "";
+let currentExpertSession = null;
+let currentExpertTimerInterval = null;
 
 // WebRTC
 let peerConnections = {};
@@ -106,6 +115,10 @@ function getShareScreenBtn() {
   return document.getElementById("shareScreenBtn");
 }
 
+function getExpertPanel() {
+  return document.getElementById("expertPanel");
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -142,6 +155,609 @@ function isLikelyImageUrl(url) {
     testUrl.startsWith("blob:") ||
     testUrl.startsWith("data:image/")
   );
+}
+
+function parseQueryParams() {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    room: params.get("room") || "",
+    expertInvite: params.get("expert_invite") || ""
+  };
+}
+
+function applyUrlParametersToInputs() {
+  const params = parseQueryParams();
+
+  if (params.room) {
+    const roomInput = document.getElementById("roomInput");
+    if (roomInput) roomInput.value = params.room;
+  }
+
+  currentExpertInviteToken = params.expertInvite || null;
+}
+
+function buildAppUrlWithParams(roomCode, inviteToken) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("room", roomCode);
+  url.searchParams.set("expert_invite", inviteToken);
+  return url.toString();
+}
+
+function generateToken(length = 24) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  let token = "";
+  for (let i = 0; i < length; i += 1) {
+    token += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return token;
+}
+
+function formatCurrency(value) {
+  const number = Number(value || 0);
+  return number.toLocaleString("de-DE", {
+    style: "currency",
+    currency: "EUR"
+  });
+}
+
+function formatDateTime(dateValue) {
+  if (!dateValue) return "–";
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return "–";
+  return date.toLocaleString("de-DE", {
+    dateStyle: "short",
+    timeStyle: "short"
+  });
+}
+
+function getMinutesBetween(startedAt, endedAt = null) {
+  if (!startedAt) return 0;
+
+  const start = new Date(startedAt).getTime();
+  const end = endedAt ? new Date(endedAt).getTime() : Date.now();
+
+  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return 0;
+
+  return Math.ceil((end - start) / 60000);
+}
+
+function calculateExpertAmount(hourlyRate, minutes) {
+  const rate = Number(hourlyRate || 0);
+  const mins = Number(minutes || 0);
+  return Number(((rate / 60) * mins).toFixed(2));
+}
+
+function clearExpertTimer() {
+  if (currentExpertTimerInterval) {
+    clearInterval(currentExpertTimerInterval);
+    currentExpertTimerInterval = null;
+  }
+}
+
+function startExpertTimerIfNeeded() {
+  clearExpertTimer();
+
+  if (!currentExpertSession || currentExpertSession.status !== "läuft") {
+    return;
+  }
+
+  currentExpertTimerInterval = setInterval(() => {
+    renderExpertPanel();
+  }, 1000);
+}
+
+function ensureExpertPanel() {
+  let panel = getExpertPanel();
+  if (panel) return panel;
+
+  panel = document.createElement("div");
+  panel.id = "expertPanel";
+  panel.style.marginTop = "16px";
+  panel.style.padding = "14px";
+  panel.style.borderRadius = "14px";
+  panel.style.background = "rgba(255,255,255,0.92)";
+  panel.style.boxShadow = "0 4px 14px rgba(0,0,0,0.08)";
+  panel.style.display = "none";
+
+  const ownerBox = getOwnerBox();
+  const participantsBox = getParticipantsBox();
+
+  if (ownerBox && ownerBox.parentNode) {
+    ownerBox.parentNode.insertBefore(panel, ownerBox.nextSibling);
+  } else if (participantsBox && participantsBox.parentNode) {
+    participantsBox.parentNode.insertBefore(panel, participantsBox);
+  } else {
+    document.body.appendChild(panel);
+  }
+
+  return panel;
+}
+
+function createExpertButton(text) {
+  const btn = document.createElement("button");
+  btn.textContent = text;
+  btn.style.padding = "10px 14px";
+  btn.style.border = "none";
+  btn.style.borderRadius = "10px";
+  btn.style.cursor = "pointer";
+  btn.style.background = "#2f6df6";
+  btn.style.color = "#fff";
+  btn.style.marginRight = "8px";
+  btn.style.marginTop = "8px";
+  return btn;
+}
+
+function createExpertValueRow(label, value) {
+  const row = document.createElement("div");
+  row.style.marginBottom = "6px";
+  row.innerHTML = `<strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}`;
+  return row;
+}
+
+function getVisibleExpertSessionValues() {
+  if (!currentExpertSession) return null;
+
+  const session = currentExpertSession;
+  const isRunning = session.status === "läuft";
+  const minutes = isRunning
+    ? getMinutesBetween(session.started_at)
+    : Number(session.total_minutes || 0);
+  const amount = isRunning
+    ? calculateExpertAmount(session.hourly_rate, minutes)
+    : Number(session.total_amount || 0);
+
+  return {
+    ...session,
+    visible_minutes: minutes,
+    visible_amount: amount
+  };
+}
+
+function renderExpertPanel() {
+  const panel = ensureExpertPanel();
+  if (!panel) return;
+
+  if (!currentRoom || !currentParticipantName) {
+    panel.style.display = "none";
+    panel.innerHTML = "";
+    return;
+  }
+
+  const isOwner = currentRole === "owner";
+  const isExpert = currentRole === "expert";
+
+  if (!isOwner && !isExpert) {
+    panel.style.display = "none";
+    panel.innerHTML = "";
+    return;
+  }
+
+  panel.style.display = "block";
+  panel.innerHTML = "";
+
+  const title = document.createElement("h3");
+  title.textContent = isOwner ? "Expertenbereich" : "Meine Experten-Sitzung";
+  title.style.marginTop = "0";
+  title.style.marginBottom = "12px";
+  panel.appendChild(title);
+
+  if (isOwner) {
+    const info = document.createElement("div");
+    info.style.marginBottom = "10px";
+    info.textContent = "Hier kannst du einen Experten per Link einladen und die Abrechnung live sehen.";
+    panel.appendChild(info);
+
+    const createInviteBtn = createExpertButton("Expertenlink erzeugen");
+    createInviteBtn.addEventListener("click", async () => {
+      await createExpertInvite();
+    });
+    panel.appendChild(createInviteBtn);
+
+    if (currentExpertInviteLink) {
+      const linkWrap = document.createElement("div");
+      linkWrap.style.marginTop = "12px";
+      linkWrap.style.padding = "10px";
+      linkWrap.style.background = "#f5f7ff";
+      linkWrap.style.borderRadius = "10px";
+
+      const linkLabel = document.createElement("div");
+      linkLabel.style.marginBottom = "6px";
+      linkLabel.innerHTML = "<strong>Aktueller Expertenlink:</strong>";
+      linkWrap.appendChild(linkLabel);
+
+      const linkField = document.createElement("input");
+      linkField.type = "text";
+      linkField.readOnly = true;
+      linkField.value = currentExpertInviteLink;
+      linkField.style.width = "100%";
+      linkField.style.boxSizing = "border-box";
+      linkField.style.padding = "8px";
+      linkField.style.borderRadius = "8px";
+      linkField.style.border = "1px solid #d6dcff";
+      linkWrap.appendChild(linkField);
+
+      const copyBtn = createExpertButton("Link kopieren");
+      copyBtn.style.background = "#2aa36b";
+      copyBtn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(currentExpertInviteLink);
+          setStatus("Expertenlink wurde kopiert");
+        } catch {
+          linkField.select();
+          document.execCommand("copy");
+          setStatus("Expertenlink wurde kopiert");
+        }
+      });
+      linkWrap.appendChild(copyBtn);
+
+      panel.appendChild(linkWrap);
+    }
+  }
+
+  if (isExpert) {
+    const expertInfo = document.createElement("div");
+    expertInfo.style.marginBottom = "10px";
+    expertInfo.textContent = "Nur du und der Raumersteller sehen deinen Stundensatz und die Sitzungsabrechnung.";
+    panel.appendChild(expertInfo);
+  }
+
+  const visibleSession = getVisibleExpertSessionValues();
+
+  if (!visibleSession) {
+    if (isExpert) {
+      const rateLabel = document.createElement("label");
+      rateLabel.textContent = "Stundensatz in €";
+      rateLabel.style.display = "block";
+      rateLabel.style.marginTop = "10px";
+      rateLabel.style.marginBottom = "6px";
+      panel.appendChild(rateLabel);
+
+      const rateInput = document.createElement("input");
+      rateInput.id = "expertRateInput";
+      rateInput.type = "number";
+      rateInput.step = "0.01";
+      rateInput.min = "0";
+      rateInput.placeholder = "z. B. 120";
+      rateInput.style.width = "100%";
+      rateInput.style.boxSizing = "border-box";
+      rateInput.style.padding = "10px";
+      rateInput.style.borderRadius = "10px";
+      rateInput.style.border = "1px solid #ccc";
+      panel.appendChild(rateInput);
+
+      const startBtn = createExpertButton("Sitzung starten");
+      startBtn.style.background = "#2aa36b";
+      startBtn.addEventListener("click", async () => {
+        await startExpertSession();
+      });
+      panel.appendChild(startBtn);
+    }
+
+    const noSession = document.createElement("div");
+    noSession.style.marginTop = "12px";
+    noSession.textContent = "Noch keine Experten-Sitzung aktiv.";
+    panel.appendChild(noSession);
+    return;
+  }
+
+  const card = document.createElement("div");
+  card.style.marginTop = "12px";
+  card.style.padding = "12px";
+  card.style.borderRadius = "12px";
+  card.style.background = "#f7f7f7";
+
+  card.appendChild(createExpertValueRow("Experte", visibleSession.expert_name || "–"));
+  card.appendChild(createExpertValueRow("Stundensatz", formatCurrency(visibleSession.hourly_rate || 0)));
+  card.appendChild(createExpertValueRow("Beginn", formatDateTime(visibleSession.started_at)));
+  card.appendChild(createExpertValueRow("Ende", visibleSession.ended_at ? formatDateTime(visibleSession.ended_at) : "läuft"));
+  card.appendChild(createExpertValueRow("Dauer", `${visibleSession.visible_minutes} Minuten`));
+  card.appendChild(createExpertValueRow("Betrag", formatCurrency(visibleSession.visible_amount)));
+
+  if (visibleSession.status === "beendet") {
+    const note = document.createElement("div");
+    note.style.marginTop = "8px";
+    note.style.fontWeight = "bold";
+    note.textContent = `Zu zahlen / in Rechnung zu stellen: ${formatCurrency(visibleSession.visible_amount)}`;
+    card.appendChild(note);
+  } else {
+    const note = document.createElement("div");
+    note.style.marginTop = "8px";
+    note.style.fontWeight = "bold";
+    note.textContent = `Aktueller Zwischenbetrag: ${formatCurrency(visibleSession.visible_amount)}`;
+    card.appendChild(note);
+  }
+
+  panel.appendChild(card);
+
+  if (isExpert && visibleSession.status === "läuft") {
+    const stopBtn = createExpertButton("Sitzung beenden");
+    stopBtn.style.background = "#e0573f";
+    stopBtn.addEventListener("click", async () => {
+      await stopExpertSession();
+    });
+    panel.appendChild(stopBtn);
+  }
+
+  if (isExpert && visibleSession.status === "beendet") {
+    const newRateLabel = document.createElement("label");
+    newRateLabel.textContent = "Neuen Stundensatz in €";
+    newRateLabel.style.display = "block";
+    newRateLabel.style.marginTop = "12px";
+    newRateLabel.style.marginBottom = "6px";
+    panel.appendChild(newRateLabel);
+
+    const newRateInput = document.createElement("input");
+    newRateInput.id = "expertRateInput";
+    newRateInput.type = "number";
+    newRateInput.step = "0.01";
+    newRateInput.min = "0";
+    newRateInput.value = String(visibleSession.hourly_rate || "");
+    newRateInput.style.width = "100%";
+    newRateInput.style.boxSizing = "border-box";
+    newRateInput.style.padding = "10px";
+    newRateInput.style.borderRadius = "10px";
+    newRateInput.style.border = "1px solid #ccc";
+    panel.appendChild(newRateInput);
+
+    const startNewBtn = createExpertButton("Neue Sitzung starten");
+    startNewBtn.style.background = "#2aa36b";
+    startNewBtn.addEventListener("click", async () => {
+      await startExpertSession();
+    });
+    panel.appendChild(startNewBtn);
+  }
+}
+
+async function createExpertInvite() {
+  try {
+    if (!currentRoom || !currentParticipantName) {
+      setStatus("Bitte zuerst Raum beitreten");
+      return;
+    }
+
+    if (currentRole !== "owner") {
+      setStatus("Nur der Raumersteller kann einen Expertenlink erzeugen");
+      return;
+    }
+
+    const token = generateToken(24);
+
+    const { error } = await client.from("expert_invites").insert([
+      {
+        room_code: currentRoom,
+        owner_name: currentParticipantName,
+        token,
+        active: true
+      }
+    ]);
+
+    if (error) {
+      setStatus("Expertenlink-Fehler: " + error.message);
+      return;
+    }
+
+    currentExpertInviteLink = buildAppUrlWithParams(currentRoom, token);
+    renderExpertPanel();
+    setStatus("Expertenlink wurde erstellt");
+  } catch (err) {
+    setStatus("JS-Fehler createExpertInvite: " + err.message);
+  }
+}
+
+async function detectRoleForCurrentRoom() {
+  currentRole = "participant";
+
+  if (!currentRoom || !currentParticipantName) {
+    return;
+  }
+
+  if (currentRoomOwner && currentParticipantName === currentRoomOwner) {
+    currentRole = "owner";
+    return;
+  }
+
+  if (!currentExpertInviteToken) {
+    return;
+  }
+
+  const { data, error } = await client
+    .from("expert_invites")
+    .select("*")
+    .eq("room_code", currentRoom)
+    .eq("token", currentExpertInviteToken)
+    .eq("active", true)
+    .limit(1);
+
+  if (error) {
+    setStatus("Experteneinladung konnte nicht geprüft werden: " + error.message);
+    return;
+  }
+
+  if (data && data.length > 0) {
+    currentRole = "expert";
+
+    const inviteRow = data[0];
+    if (!inviteRow.used_at) {
+      await client
+        .from("expert_invites")
+        .update({ used_at: new Date().toISOString() })
+        .eq("id", inviteRow.id);
+    }
+  }
+}
+
+async function loadExpertSession() {
+  try {
+    if (!currentRoom || !currentParticipantName) {
+      currentExpertSession = null;
+      clearExpertTimer();
+      renderExpertPanel();
+      return;
+    }
+
+    if (currentRole !== "owner" && currentRole !== "expert") {
+      currentExpertSession = null;
+      clearExpertTimer();
+      renderExpertPanel();
+      return;
+    }
+
+    let query = client
+      .from("expert_sessions")
+      .select("*")
+      .eq("room_code", currentRoom)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (currentRole === "expert") {
+      query = client
+        .from("expert_sessions")
+        .select("*")
+        .eq("room_code", currentRoom)
+        .eq("expert_name", currentParticipantName)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (currentExpertInviteToken) {
+        query = client
+          .from("expert_sessions")
+          .select("*")
+          .eq("room_code", currentRoom)
+          .eq("expert_name", currentParticipantName)
+          .eq("invite_token", currentExpertInviteToken)
+          .order("created_at", { ascending: false })
+          .limit(1);
+      }
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      setStatus("Experten-Sitzung Fehler: " + error.message);
+      return;
+    }
+
+    currentExpertSession = data && data.length > 0 ? data[0] : null;
+    startExpertTimerIfNeeded();
+    renderExpertPanel();
+  } catch (err) {
+    setStatus("JS-Fehler loadExpertSession: " + err.message);
+  }
+}
+
+function subscribeExpertRealtime() {
+  try {
+    if (!currentRoom) return;
+
+    if (currentExpertChannel) {
+      client.removeChannel(currentExpertChannel);
+    }
+
+    currentExpertChannel = client
+      .channel("expert-" + currentRoom)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "expert_sessions",
+          filter: "room_code=eq." + currentRoom
+        },
+        () => {
+          loadExpertSession();
+        }
+      )
+      .subscribe();
+  } catch (err) {
+    setStatus("JS-Fehler expert realtime: " + err.message);
+  }
+}
+
+async function startExpertSession() {
+  try {
+    if (currentRole !== "expert") {
+      setStatus("Nur eingeladene Experten können eine Sitzung starten");
+      return;
+    }
+
+    if (!currentRoom || !currentParticipantName) {
+      setStatus("Bitte zuerst Raum beitreten");
+      return;
+    }
+
+    if (currentExpertSession && currentExpertSession.status === "läuft") {
+      setStatus("Deine Sitzung läuft bereits");
+      return;
+    }
+
+    const rateInput = document.getElementById("expertRateInput");
+    const hourlyRate = Number(rateInput ? rateInput.value : 0);
+
+    if (!hourlyRate || hourlyRate <= 0) {
+      setStatus("Bitte einen gültigen Stundensatz eingeben");
+      return;
+    }
+
+    const { error } = await client.from("expert_sessions").insert([
+      {
+        room_code: currentRoom,
+        expert_name: currentParticipantName,
+        owner_name: currentRoomOwner || "",
+        invite_token: currentExpertInviteToken,
+        hourly_rate: hourlyRate,
+        started_at: new Date().toISOString(),
+        status: "läuft"
+      }
+    ]);
+
+    if (error) {
+      setStatus("Sitzung konnte nicht gestartet werden: " + error.message);
+      return;
+    }
+
+    setStatus("Experten-Sitzung gestartet");
+    await loadExpertSession();
+  } catch (err) {
+    setStatus("JS-Fehler startExpertSession: " + err.message);
+  }
+}
+
+async function stopExpertSession() {
+  try {
+    if (currentRole !== "expert") {
+      setStatus("Nur der Experte kann seine Sitzung beenden");
+      return;
+    }
+
+    if (!currentExpertSession || currentExpertSession.status !== "läuft") {
+      setStatus("Es läuft keine Experten-Sitzung");
+      return;
+    }
+
+    const endedAt = new Date().toISOString();
+    const totalMinutes = getMinutesBetween(currentExpertSession.started_at, endedAt);
+    const totalAmount = calculateExpertAmount(currentExpertSession.hourly_rate, totalMinutes);
+
+    const { error } = await client
+      .from("expert_sessions")
+      .update({
+        ended_at: endedAt,
+        total_minutes: totalMinutes,
+        total_amount: totalAmount,
+        status: "beendet"
+      })
+      .eq("id", currentExpertSession.id);
+
+    if (error) {
+      setStatus("Sitzung konnte nicht beendet werden: " + error.message);
+      return;
+    }
+
+    setStatus(`Experten-Sitzung beendet. Betrag: ${formatCurrency(totalAmount)}`);
+    await loadExpertSession();
+  } catch (err) {
+    setStatus("JS-Fehler stopExpertSession: " + err.message);
+  }
 }
 
 function updateWorkButtons(activeWorkerName) {
@@ -247,6 +863,11 @@ function cleanupChannels() {
   if (currentWebRTCChannel) {
     client.removeChannel(currentWebRTCChannel);
     currentWebRTCChannel = null;
+  }
+
+  if (currentExpertChannel) {
+    client.removeChannel(currentExpertChannel);
+    currentExpertChannel = null;
   }
 
   closeAllPeerConnections();
@@ -606,9 +1227,11 @@ async function joinRoom(options = {}) {
 
     currentRoom = code;
     currentParticipantName = name;
+    currentRoomOwner = data[0].owner_name || null;
 
     saveRoomSession(code);
 
+    await detectRoleForCurrentRoom();
     await upsertParticipantStatus("online");
 
     if (restoring) {
@@ -623,6 +1246,7 @@ async function joinRoom(options = {}) {
     await loadChatMessages();
     await loadStorageItems();
     await loadScreenStatus();
+    await loadExpertSession();
 
     subscribeRealtime();
     subscribeWorkerRealtime();
@@ -630,8 +1254,10 @@ async function joinRoom(options = {}) {
     subscribeStorageRealtime();
     subscribeScreenRealtime();
     subscribeWebRTCSignals();
+    subscribeExpertRealtime();
 
     updateShareButton();
+    renderExpertPanel();
   } catch (err) {
     setStatus("JS-Fehler joinRoom: " + err.message);
   }
@@ -670,8 +1296,10 @@ async function leaveRoom() {
     await upsertParticipantStatus("verlassen");
 
     cleanupChannels();
+    clearExpertTimer();
 
     currentRoom = null;
+    currentRoomOwner = null;
     currentParticipantName = null;
     currentParticipantStatus = null;
     currentScreenOwner = null;
@@ -679,6 +1307,9 @@ async function leaveRoom() {
     isSharingScreen = false;
     localSharedScreens = {};
     remoteScreenStreams = {};
+    currentRole = "participant";
+    currentExpertSession = null;
+    currentExpertInviteLink = "";
     resetScreenSlots();
     clearSavedRoom();
 
@@ -704,6 +1335,7 @@ async function leaveRoom() {
     if (textsArea) textsArea.innerHTML = "<p>Noch keine Texte im Raum</p>";
 
     renderScreens();
+    renderExpertPanel();
     updateWorkButtons(null);
     updateShareButton();
     setStatus("Du hast den Raum verlassen");
@@ -730,6 +1362,7 @@ async function loadOwner() {
       return;
     }
 
+    currentRoomOwner = data[0].owner_name || null;
     box.innerHTML = `<strong>Raumersteller:</strong><br>${escapeHtml(data[0].owner_name || "Unbekannt")}`;
   } catch (err) {
     setStatus("JS-Fehler loadOwner: " + err.message);
@@ -1892,12 +2525,16 @@ function clearNameOnly() {
 async function restorePreviousSession() {
   try {
     loadSavedName();
-    const savedRoom = loadSavedRoom();
+    loadSavedRoom();
+    applyUrlParametersToInputs();
+
+    const savedRoom = document.getElementById("roomInput")?.value?.trim() || "";
     const savedName = localStorage.getItem(SAVED_NAME_KEY);
 
     if (!savedRoom || !savedName) {
       updateWorkButtons(null);
       updateShareButton();
+      renderExpertPanel();
       return;
     }
 
@@ -1920,7 +2557,10 @@ async function restorePreviousSession() {
 document.addEventListener("DOMContentLoaded", async () => {
   loadSavedName();
   loadSavedRoom();
+  applyUrlParametersToInputs();
   renderScreens();
+  ensureExpertPanel();
+  renderExpertPanel();
 
   const nameInput = document.getElementById("nameInput");
   if (nameInput) {
