@@ -3,6 +3,8 @@ const SUPABASE_KEY = "sb_publishable_PYWvX53ZCnSqCDL5iGjDgQ_VD-KN85H";
 
 const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+const STORAGE_BUCKET = "faceproject-files";
+
 let currentRoom = null;
 let currentParticipantName = null;
 let currentParticipantStatus = null;
@@ -16,7 +18,6 @@ let currentWebRTCChannel = null;
 let localScreenStream = null;
 let isSharingScreen = false;
 let currentScreenOwner = null;
-let currentRoomOwnerName = null;
 
 // WebRTC
 let peerConnections = {};
@@ -43,23 +44,6 @@ function setStatus(text) {
   const el = document.getElementById("status");
   if (el) el.innerText = text;
   console.log(text);
-}
-
-function isMissingTableError(error, tableName) {
-  if (!error || !error.message) return false;
-  return error.message.includes(`Could not find the table 'public.${tableName}'`) ||
-         error.message.includes(`relation "public.${tableName}" does not exist`) ||
-         error.message.includes(`relation "${tableName}" does not exist`);
-}
-
-function escapeHtml(text) {
-  if (text === null || text === undefined) return "";
-  return String(text)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
 }
 
 function getParticipantsBox() {
@@ -116,12 +100,6 @@ function getTextsArea() {
 
 function getShareScreenBtn() {
   return document.getElementById("shareScreenBtn");
-}
-
-function isCurrentUserRoomOwner() {
-  return !!currentParticipantName &&
-         !!currentRoomOwnerName &&
-         currentParticipantName === currentRoomOwnerName;
 }
 
 function updateWorkButtons(activeWorkerName) {
@@ -328,6 +306,51 @@ function promoteScreen(index) {
   renderScreens();
 }
 
+function sanitizeFileName(name) {
+  return name
+    .normalize("NFKD")
+    .replace(/[^\w.\-]+/g, "_")
+    .replace(/_+/g, "_");
+}
+
+function createStoragePath(file, kind) {
+  const safeName = sanitizeFileName(file.name || `${kind}_${Date.now()}`);
+  const unique = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  return `${currentRoom}/${kind}/${unique}_${safeName}`;
+}
+
+async function uploadToStorage(file, kind) {
+  if (!currentRoom) {
+    throw new Error("Kein Raum aktiv");
+  }
+
+  const path = createStoragePath(file, kind);
+
+  const { error: uploadError } = await client.storage
+    .from(STORAGE_BUCKET)
+    .upload(path, file, {
+      cacheControl: "3600",
+      upsert: false
+    });
+
+  if (uploadError) {
+    throw uploadError;
+  }
+
+  const { data: publicData } = client.storage
+    .from(STORAGE_BUCKET)
+    .getPublicUrl(path);
+
+  if (!publicData || !publicData.publicUrl) {
+    throw new Error("Public URL konnte nicht erzeugt werden");
+  }
+
+  return {
+    path,
+    url: publicData.publicUrl
+  };
+}
+
 async function upsertParticipantStatus(statusValue) {
   if (!currentRoom || !currentParticipantName) return;
 
@@ -448,7 +471,6 @@ async function joinRoom(options = {}) {
 
     currentRoom = code;
     currentParticipantName = name;
-    currentRoomOwnerName = data[0].owner_name || null;
 
     saveRoomSession(code);
 
@@ -518,7 +540,6 @@ async function leaveRoom() {
     currentParticipantName = null;
     currentParticipantStatus = null;
     currentScreenOwner = null;
-    currentRoomOwnerName = null;
     clearSavedRoom();
 
     const ownerBox = getOwnerBox();
@@ -565,13 +586,11 @@ async function loadOwner() {
       .limit(1);
 
     if (error || !data || data.length === 0) {
-      currentRoomOwnerName = null;
       box.innerHTML = "<strong>Raumersteller:</strong><br>Unbekannt";
       return;
     }
 
-    currentRoomOwnerName = data[0].owner_name || null;
-    box.innerHTML = `<strong>Raumersteller:</strong><br>${currentRoomOwnerName || "Unbekannt"}`;
+    box.innerHTML = `<strong>Raumersteller:</strong><br>${data[0].owner_name || "Unbekannt"}`;
   } catch (err) {
     setStatus("JS-Fehler loadOwner: " + err.message);
   }
@@ -958,8 +977,8 @@ async function loadChatMessages() {
 
     box.innerHTML = data.map(msg => `
       <div class="chat-message">
-        <strong>${escapeHtml(msg.sender_name)}</strong>
-        <div>${escapeHtml(msg.message)}</div>
+        <strong>${msg.sender_name}</strong>
+        <div>${msg.message}</div>
       </div>
     `).join("");
 
@@ -997,77 +1016,48 @@ function subscribeChatRealtime() {
   }
 }
 
-function buildDeleteButton(itemId) {
-  if (!isCurrentUserRoomOwner()) return "";
-  return `
-    <button
-      type="button"
-      class="workspace-delete-btn"
-      onclick="deleteStorageItem('${itemId}')"
-      style="margin-top:8px;background:#c62828;color:#fff;border:none;border-radius:10px;padding:8px 10px;cursor:pointer;width:auto;"
-    >
-      Löschen
-    </button>
-  `;
-}
-
-function buildStorageItemHtml(item) {
-  const deleteBtn = buildDeleteButton(item.id);
-
-  if (item.type === "file") {
-    const safeContent = item.content || "";
-    return `<div class="storage-item">${safeContent}${deleteBtn}</div>`;
+function renderFileItems(fileItems) {
+  if (!fileItems.length) {
+    return "<p>Noch keine Dateien im Raum</p>";
   }
 
-  if (item.type === "image") {
-    const safeContent = item.content || "";
-    return `<div class="storage-item">${safeContent}${deleteBtn}</div>`;
-  }
-
-  return `
-    <div class="storage-item" style="width:100%;">
-      <div>${escapeHtml(item.content)}</div>
-      ${deleteBtn}
-    </div>
-  `;
+  return fileItems.map(item => {
+    const safeUrl = item.content || "#";
+    const label = item.file_name || "Datei öffnen";
+    return `
+      <div style="margin-bottom:10px;">
+        <a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${label}</a>
+      </div>
+    `;
+  }).join("");
 }
 
-async function deleteStorageItem(itemId) {
-  try {
-    if (!currentRoom || !currentParticipantName) {
-      setStatus("Bitte erst Raum beitreten");
-      return;
-    }
-
-    if (!isCurrentUserRoomOwner()) {
-      setStatus("Nur der Raumersteller darf Einträge löschen");
-      return;
-    }
-
-    const { error } = await client
-      .from("storage_items")
-      .delete()
-      .eq("id", itemId)
-      .eq("room_code", currentRoom);
-
-    if (error) {
-      if (isMissingTableError(error, "storage_items")) {
-        setStatus("Tabelle storage_items fehlt in Supabase");
-        return;
-      }
-
-      setStatus("Lösch-Fehler: " + error.message);
-      return;
-    }
-
-    setStatus("Eintrag wurde gelöscht");
-    await loadStorageItems();
-  } catch (err) {
-    setStatus("JS-Fehler deleteStorageItem: " + err.message);
+function renderImageItems(imageItems) {
+  if (!imageItems.length) {
+    return "<p>Noch keine Bilder im Raum</p>";
   }
+
+  return imageItems.map(item => {
+    const safeUrl = item.content || "";
+    const altText = item.file_name || "Bild";
+    return `
+      <div style="margin-bottom:12px;">
+        <img src="${safeUrl}" alt="${altText}" style="max-width:100%; border-radius:12px; display:block;">
+      </div>
+    `;
+  }).join("");
 }
 
-window.deleteStorageItem = deleteStorageItem;
+function renderTextItems(textItems) {
+  if (!textItems.length) {
+    return "<p>Noch keine Texte im Raum</p>";
+  }
+
+  return textItems.map(item => {
+    const text = item.content || "";
+    return `<div style="margin-bottom:10px; white-space:pre-wrap;">${text}</div>`;
+  }).join("");
+}
 
 async function loadStorageItems() {
   try {
@@ -1086,22 +1076,11 @@ async function loadStorageItems() {
     if (!files || !images || !texts) return;
 
     if (error) {
-      if (isMissingTableError(error, "storage_items")) {
-        files.innerHTML = "<p>Tabelle storage_items fehlt</p>";
-        images.innerHTML = "<p>Tabelle storage_items fehlt</p>";
-        texts.innerHTML = "<p>Tabelle storage_items fehlt</p>";
-        return;
-      }
-
       files.innerHTML = "<p>Fehler beim Laden</p>";
       images.innerHTML = "<p>Fehler beim Laden</p>";
       texts.innerHTML = "<p>Fehler beim Laden</p>";
       return;
     }
-
-    files.innerHTML = "";
-    images.innerHTML = "";
-    texts.innerHTML = "";
 
     const items = data || [];
 
@@ -1109,17 +1088,9 @@ async function loadStorageItems() {
     const imageItems = items.filter(item => item.type === "image");
     const textItems = items.filter(item => item.type === "text");
 
-    files.innerHTML = fileItems.length
-      ? fileItems.map(item => buildStorageItemHtml(item)).join("")
-      : "<p>Noch keine Dateien im Raum</p>";
-
-    images.innerHTML = imageItems.length
-      ? imageItems.map(item => buildStorageItemHtml(item)).join("")
-      : "<p>Noch keine Bilder im Raum</p>";
-
-    texts.innerHTML = textItems.length
-      ? textItems.map(item => buildStorageItemHtml(item)).join("")
-      : "<p>Noch keine Texte im Raum</p>";
+    files.innerHTML = renderFileItems(fileItems);
+    images.innerHTML = renderImageItems(imageItems);
+    texts.innerHTML = renderTextItems(textItems);
   } catch (err) {
     setStatus("JS-Fehler loadStorageItems: " + err.message);
   }
@@ -1245,7 +1216,6 @@ async function loadScreenStatus() {
 
     if (!peerConnections[activeShare.owner]) {
       body.innerHTML = `<p>${activeShare.owner} verbindet…</p>`;
-
       setTimeout(() => {
         announceViewerReady(activeShare.owner);
       }, 500);
@@ -1671,81 +1641,90 @@ document.addEventListener("DOMContentLoaded", async () => {
   const uploadFileBtn = document.getElementById("uploadFileBtn");
   if (uploadFileBtn) {
     uploadFileBtn.addEventListener("click", async () => {
-      if (!currentRoom) {
-        setStatus("Bitte erst einem Raum beitreten");
-        return;
-      }
-
-      const input = document.createElement("input");
-      input.type = "file";
-
-      input.onchange = async () => {
-        const file = input.files[0];
-        if (!file) return;
-
-        const url = URL.createObjectURL(file);
-
-        const { error } = await client.from("storage_items").insert([{
-          room_code: currentRoom,
-          type: "file",
-          content: `<a href="${url}" target="_blank" rel="noopener noreferrer">${escapeHtml(file.name)}</a>`
-        }]);
-
-        if (error) {
-          if (isMissingTableError(error, "storage_items")) {
-            setStatus("Tabelle storage_items fehlt in Supabase");
-            return;
-          }
-
-          setStatus("Datei-Fehler: " + error.message);
+      try {
+        if (!currentRoom) {
+          setStatus("Bitte erst einem Raum beitreten");
           return;
         }
 
-        await loadStorageItems();
-      };
+        const input = document.createElement("input");
+        input.type = "file";
 
-      input.click();
+        input.onchange = async () => {
+          const file = input.files[0];
+          if (!file) return;
+
+          setStatus("Datei wird hochgeladen...");
+
+          const uploaded = await uploadToStorage(file, "file");
+
+          const { error } = await client.from("storage_items").insert([{
+            room_code: currentRoom,
+            type: "file",
+            content: uploaded.url,
+            file_name: file.name,
+            storage_path: uploaded.path
+          }]);
+
+          if (error) {
+            setStatus("Datei-Fehler: " + error.message);
+            return;
+          }
+
+          await loadStorageItems();
+          setStatus("Datei hochgeladen");
+        };
+
+        input.click();
+      } catch (err) {
+        setStatus("Datei-Fehler: " + err.message);
+      }
     });
   }
 
   const uploadImageBtn = document.getElementById("uploadImageBtn");
   if (uploadImageBtn) {
     uploadImageBtn.addEventListener("click", async () => {
-      if (!currentRoom) {
-        setStatus("Bitte erst einem Raum beitreten");
-        return;
-      }
-
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = "image/*";
-
-      input.onchange = async () => {
-        const file = input.files[0];
-        if (!file) return;
-
-        const url = URL.createObjectURL(file);
-
-        const { error } = await client.from("storage_items").insert([{
-          room_code: currentRoom,
-          type: "image",
-          content: `<img src="${url}" alt="${escapeHtml(file.name)}" style="max-width:100%;border-radius:10px;">`
-        }]);
-
-        if (error) {
-          if (isMissingTableError(error, "storage_items")) {
-            setStatus("Tabelle storage_items fehlt in Supabase");
-            return;
-          }
-
-          setStatus("Bild-Fehler: " + error.message);
+      try {
+        if (!currentRoom) {
+          setStatus("Bitte erst einem Raum beitreten");
           return;
         }
 
-        await loadStorageItems();
-      };
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = "image/*";
+        input.capture = "environment";
 
-      input.click();
+        input.onchange = async () => {
+          const file = input.files[0];
+          if (!file) return;
+
+          setStatus("Bild wird hochgeladen...");
+
+          const uploaded = await uploadToStorage(file, "image");
+
+          const { error } = await client.from("storage_items").insert([{
+            room_code: currentRoom,
+            type: "image",
+            content: uploaded.url,
+            file_name: file.name,
+            storage_path: uploaded.path
+          }]);
+
+          if (error) {
+            setStatus("Bild-Fehler: " + error.message);
+            return;
+          }
+
+          await loadStorageItems();
+          setStatus("Bild hochgeladen");
+        };
+
+        input.click();
+      } catch (err) {
+        setStatus("Bild-Fehler: " + err.message);
+      }
     });
   }
 
@@ -1768,11 +1747,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       }]);
 
       if (error) {
-        if (isMissingTableError(error, "storage_items")) {
-          setStatus("Tabelle storage_items fehlt in Supabase");
-          return;
-        }
-
         setStatus("Text-Fehler: " + error.message);
         return;
       }
