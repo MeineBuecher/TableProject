@@ -4,21 +4,22 @@
   <meta charset="UTF-8">
   <title>TableProject™</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- PWA -->
   <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#ff6a00">
+  <meta name="theme-color" content="#ff6a00">
 
-  <!-- Logo / Favicon -->
-  <link rel="icon" type="image/png" href="Logo-TableProject.png">
-  <link rel="apple-touch-icon" href="Logo-TableProject.png">
+  <!-- App Icons -->
+  <link rel="icon" type="image/png" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
 
+  <!-- Supabase -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <!-- Styles -->
   <link rel="stylesheet" href="style.css">
 </head>
-  <script>
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("service-worker.js");
-}
-</script>
+
 <body>
 
   <div class="app-shell">
@@ -63,7 +64,6 @@ if ("serviceWorker" in navigator) {
         </div>
       </div>
 
-      <!-- 3 gleich große Bereiche nebeneinander -->
       <div class="workspace-main-grid workspace-main-grid-three">
         
         <!-- DATEIEN -->
@@ -164,7 +164,15 @@ if ("serviceWorker" in navigator) {
     </div>
   </div>
 
+  <!-- App Script -->
   <script src="app.js"></script>
+
+  <!-- Service Worker (RICHTIG POSITIONIERT) -->
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("service-worker.js");
+    }
+  </script>
+
 </body>
-</html>
 </html>
