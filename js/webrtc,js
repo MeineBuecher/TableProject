@@ -1,5 +1,153 @@
-import { RTC_CONFIG } from "./config.js";
+// js/webrtc.js
 
-export function createPeer() {
-  return new RTCPeerConnection(RTC_CONFIG);
+import { client } from "./supabase.js";
+import * as state from "./state.js";
+
+const RTC_CONFIG = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" }
+  ]
+};
+
+let peerConnections = {};
+let remoteStreams = {};
+
+function getKey(user, slot) {
+  return `${user}_${slot}`;
+}
+
+// =============================
+// VIEWER SIGNAL
+// =============================
+
+export async function notifyViewer(owner, slot) {
+  await client.from("webrtc_signals").insert([{
+    room_code: state.currentRoom,
+    sender: state.currentParticipantName,
+    target: owner,
+    type: "viewer_ready",
+    payload: { slot }
+  }]);
+}
+
+// =============================
+// SENDER
+// =============================
+
+function createSender(viewer, slot, stream) {
+  const pc = new RTCPeerConnection(RTC_CONFIG);
+
+  stream.getTracks().forEach(track => {
+    pc.addTrack(track, stream);
+  });
+
+  pc.onicecandidate = async e => {
+    if (!e.candidate) return;
+
+    await client.from("webrtc_signals").insert([{
+      room_code: state.currentRoom,
+      sender: state.currentParticipantName,
+      target: viewer,
+      type: "candidate",
+      payload: { candidate: e.candidate, slot }
+    }]);
+  };
+
+  peerConnections[getKey(viewer, slot)] = pc;
+  return pc;
+}
+
+// =============================
+// VIEWER
+// =============================
+
+function createViewer(owner, slot) {
+  const pc = new RTCPeerConnection(RTC_CONFIG);
+
+  pc.ontrack = e => {
+    const stream = e.streams[0];
+    remoteStreams[getKey(owner, slot)] = stream;
+
+    window.renderRemoteStream(slot, stream);
+  };
+
+  pc.onicecandidate = async e => {
+    if (!e.candidate) return;
+
+    await client.from("webrtc_signals").insert([{
+      room_code: state.currentRoom,
+      sender: state.currentParticipantName,
+      target: owner,
+      type: "candidate",
+      payload: { candidate: e.candidate, slot }
+    }]);
+  };
+
+  peerConnections[getKey(owner, slot)] = pc;
+  return pc;
+}
+
+// =============================
+// SIGNAL HANDLER
+// =============================
+
+export async function handleSignal(signal, localScreens) {
+
+  const { type, sender, target, payload } = signal;
+  const slot = payload?.slot;
+
+  if (target !== state.currentParticipantName) return;
+
+  // VIEWER READY
+  if (type === "viewer_ready") {
+    const stream = localScreens[slot]?.stream;
+    if (!stream) return;
+
+    const pc = createSender(sender, slot, stream);
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    await client.from("webrtc_signals").insert([{
+      room_code: state.currentRoom,
+      sender: state.currentParticipantName,
+      target: sender,
+      type: "offer",
+      payload: { offer, slot }
+    }]);
+  }
+
+  // OFFER
+  if (type === "offer") {
+    const pc = createViewer(sender, slot);
+
+    await pc.setRemoteDescription(new RTCSessionDescription(payload.offer));
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+
+    await client.from("webrtc_signals").insert([{
+      room_code: state.currentRoom,
+      sender: state.currentParticipantName,
+      target: sender,
+      type: "answer",
+      payload: { answer, slot }
+    }]);
+  }
+
+  // ANSWER
+  if (type === "answer") {
+    const pc = peerConnections[getKey(sender, slot)];
+    if (!pc) return;
+
+    await pc.setRemoteDescription(new RTCSessionDescription(payload.answer));
+  }
+
+  // ICE
+  if (type === "candidate") {
+    const pc = peerConnections[getKey(sender, slot)];
+    if (!pc) return;
+
+    await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
+  }
 }
