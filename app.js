@@ -2133,7 +2133,48 @@ async function announceViewerReady(ownerName, slotIndex) {
 function createSenderPeerConnection(viewerName, slotIndex) {
   const pc = new RTCPeerConnection(RTC_CONFIG);
   const key = createPeerConnectionKey(viewerName, slotIndex);
+
   const localEntry = localSharedScreens[slotIndex];
+
+  if (!localEntry || !localEntry.stream) {
+    console.log("❌ Kein lokaler Stream vorhanden");
+    return pc;
+  }
+
+  console.log("✅ Sende Stream an:", viewerName);
+
+  // 🔥 GANZ WICHTIG: Tracks hinzufügen
+  localEntry.stream.getTracks().forEach(track => {
+    pc.addTrack(track, localEntry.stream);
+  });
+
+  // 🔥 ICE Kandidaten senden
+  pc.onicecandidate = async (event) => {
+    if (!event.candidate) return;
+
+    await client.from("webrtc_signals").insert([
+      {
+        room_code: currentRoom,
+        sender: currentParticipantName,
+        target: viewerName,
+        type: "candidate",
+        payload: {
+          candidate: event.candidate,
+          slot_index: slotIndex
+        }
+      }
+    ]);
+  };
+
+  // 🔥 DEBUG (sehr wichtig)
+  pc.onconnectionstatechange = () => {
+    console.log("Sender Connection:", pc.connectionState);
+  };
+
+  peerConnections[key] = pc;
+
+  return pc;
+}
 
   if (localEntry && localEntry.stream) {
     localEntry.stream.getTracks().forEach(track => {
