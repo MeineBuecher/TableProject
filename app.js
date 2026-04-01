@@ -38,22 +38,24 @@ let handledSignalIds = new Set();
 
 const RTC_CONFIG = {
   iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
+    {
+      urls: "stun:stun.l.google.com:19302"
+    },
 
     {
-      urls: "turn:openrelay.metered.ca:80",
-      username: "openrelayproject",
-      credential: "openrelayproject"
+      urls: "turn:global.relay.metered.ca:80",
+      username: "3cb4920708e7d12fa71d529",
+      credential: "RepxCSXW0vm-A76"
     },
     {
-      urls: "turn:openrelay.metered.ca:443",
-      username: "openrelayproject",
-      credential: "openrelayproject"
+      urls: "turn:global.relay.metered.ca:443",
+      username: "3cb4920708e7d12fa71d529",
+      credential: "RepxCSXW0vm-A76"
     },
     {
-      urls: "turns:openrelay.metered.ca:443",
-      username: "openrelayproject",
-      credential: "openrelayproject"
+      urls: "turns:global.relay.metered.ca:443",
+      username: "3cb4920708e7d12fa71d529",
+      credential: "RepxCSXW0vm-A76"
     }
   ]
 };
