@@ -1,5 +1,6 @@
 // main.js
 
+import { handleSignal, notifyViewer } from "./webrtc.js";
 import { setStatus } from "./utils.js";
 import { client } from "./supabase.js";
 import * as state from "./state.js";
