@@ -1,6 +1,5 @@
 // main.js
 
-import { handleSignal, notifyViewer } from "./webrtc.js";
 import { setStatus } from "./utils.js";
 import { client } from "./supabase.js";
 import * as state from "./state.js";
@@ -13,7 +12,7 @@ let participantChannel = null;
 let chatChannel = null;
 let storageChannel = null;
 let screenChannel = null;
-let webrtcChannel = null; // 🔥 NEU
+let webrtcChannel = null;
 
 // =============================
 // SCREEN STATE
@@ -29,7 +28,7 @@ let screenSlots = [
 let localScreens = {};
 
 // =============================
-// 🔥 WEBRTC STATE
+// WEBRTC STATE
 // =============================
 
 let peerConnections = {};
@@ -43,148 +42,66 @@ const RTC_CONFIG = {
 };
 
 // =============================
-// BASIS FUNKTIONEN
+// BASIS
 // =============================
 
 function getName() {
-  const input = document.getElementById("nameInput");
-  return input ? input.value.trim() : "";
+  return document.getElementById("nameInput")?.value.trim() || "";
 }
 
 function getRoom() {
-  const input = document.getElementById("roomInput");
-  return input ? input.value.trim().toUpperCase() : "";
+  return document.getElementById("roomInput")?.value.trim().toUpperCase() || "";
 }
 
 // =============================
-// 🔥 STORAGE UPLOAD CORE
-// =============================
-
-async function uploadToStorage(file, type) {
-  if (!state.currentRoom) throw new Error("Kein Raum aktiv");
-
-  const fileName =
-    Date.now() +
-    "_" +
-    Math.random().toString(36).substring(2, 8) +
-    "_" +
-    file.name;
-
-  const path = `${state.currentRoom}/${type}/${fileName}`;
-
-  const { error } = await client.storage
-    .from("faceproject-files")
-    .upload(path, file);
-
-  if (error) throw error;
-
-  const { data } = client.storage
-    .from("faceproject-files")
-    .getPublicUrl(path);
-
-  return {
-    path,
-    url: data.publicUrl
-  };
-}
-
-// =============================
-// RAUM ERSTELLEN
+// RAUM
 // =============================
 
 async function createRoom() {
   const name = getName();
-  if (!name) {
-    setStatus("Bitte Namen eingeben");
-    return;
-  }
+  if (!name) return setStatus("Bitte Namen eingeben");
 
   const code = Math.random().toString(36).substring(2, 8).toUpperCase();
 
-  const { error } = await client.from("rooms").insert([
-    {
-      code,
-      owner_name: name
-    }
-  ]);
-
-  if (error) {
-    setStatus(error.message);
-    return;
-  }
+  const { error } = await client.from("rooms").insert([{ code, owner_name: name }]);
+  if (error) return setStatus(error.message);
 
   document.getElementById("roomInput").value = code;
-
   setStatus("Raum erstellt: " + code);
 
   await joinRoom();
 }
 
-// =============================
-// RAUM BEITRETEN
-// =============================
-
 async function joinRoom() {
   const name = getName();
   const code = getRoom();
 
-  if (!name) {
-    setStatus("Bitte Namen eingeben");
-    return;
-  }
+  if (!name) return setStatus("Bitte Namen eingeben");
+  if (!code) return setStatus("Bitte Raumcode eingeben");
 
-  if (!code) {
-    setStatus("Bitte Raumcode eingeben");
-    return;
-  }
-
-  const { data, error } = await client
-    .from("rooms")
-    .select("*")
-    .eq("code", code)
-    .limit(1);
-
-  if (error || !data.length) {
-    setStatus("Raum nicht gefunden");
-    return;
-  }
+  const { data } = await client.from("rooms").select("*").eq("code", code).limit(1);
+  if (!data || !data.length) return setStatus("Raum nicht gefunden");
 
   state.currentRoom = code;
   state.currentParticipantName = name;
   state.currentRoomOwner = data[0].owner_name;
 
-  await client.from("participants").insert([
-    {
-      room_code: code,
-      name: name,
-      status: "online"
-    }
-  ]);
+  await client.from("participants").insert([{ room_code: code, name, status: "online" }]);
 
   setStatus("Verbunden mit: " + code);
 
-  loadParticipants();
-  loadChat();
-  loadStorageItems();
   loadScreens();
-
-  subscribeParticipantsRealtime();
-  subscribeChatRealtime();
-  subscribeStorageRealtime();
-  subscribeScreenRealtime();
-  subscribeWebRTC(); // 🔥 NEU
+  subscribeWebRTC();
 }
 
 // =============================
-// 🔥 WEBRTC REALTIME
+// WEBRTC REALTIME
 // =============================
 
 function subscribeWebRTC() {
   if (!state.currentRoom) return;
 
-  if (webrtcChannel) {
-    client.removeChannel(webrtcChannel);
-  }
+  if (webrtcChannel) client.removeChannel(webrtcChannel);
 
   webrtcChannel = client
     .channel("webrtc-" + state.currentRoom)
@@ -208,7 +125,7 @@ function subscribeWebRTC() {
 }
 
 // =============================
-// 🔥 SIGNAL HANDLER
+// SIGNAL HANDLER
 // =============================
 
 async function handleSignal(signal) {
@@ -221,7 +138,7 @@ async function handleSignal(signal) {
 }
 
 // =============================
-// 🔥 VIEWER MELDET SICH
+// VIEWER → OWNER
 // =============================
 
 async function announceViewer(owner, slot) {
@@ -235,7 +152,7 @@ async function announceViewer(owner, slot) {
 }
 
 // =============================
-// 🔥 OWNER SEND STREAM
+// OWNER → SEND STREAM
 // =============================
 
 async function handleViewerReady(signal) {
@@ -276,7 +193,7 @@ async function handleViewerReady(signal) {
 }
 
 // =============================
-// 🔥 VIEWER EMPFÄNGT
+// VIEWER EMPFÄNGT
 // =============================
 
 async function handleOffer(signal) {
@@ -319,7 +236,7 @@ async function handleOffer(signal) {
 }
 
 // =============================
-// 🔥 ANSWER
+// ANSWER
 // =============================
 
 async function handleAnswer(signal) {
@@ -329,13 +246,11 @@ async function handleAnswer(signal) {
   const pc = peerConnections[viewer + "_" + slot];
   if (!pc) return;
 
-  await pc.setRemoteDescription(
-    new RTCSessionDescription(signal.payload.answer)
-  );
+  await pc.setRemoteDescription(new RTCSessionDescription(signal.payload.answer));
 }
 
 // =============================
-// 🔥 ICE
+// ICE
 // =============================
 
 async function handleCandidate(signal) {
@@ -351,7 +266,7 @@ async function handleCandidate(signal) {
 }
 
 // =============================
-// 🔥 SCREEN ERWEITERT
+// SCREEN LOGIK
 // =============================
 
 async function loadScreens() {
@@ -385,35 +300,70 @@ async function loadScreens() {
 }
 
 // =============================
+// RENDER
+// =============================
+
+function renderScreens() {
+  const boxes = [
+    document.getElementById("primaryScreen"),
+    document.getElementById("screenThumb1"),
+    document.getElementById("screenThumb2"),
+    document.getElementById("screenThumb3")
+  ];
+
+  boxes.forEach((box, i) => {
+    if (!box) return;
+
+    const body = box.querySelector(".screen-slot-body");
+    body.innerHTML = "";
+
+    const slot = screenSlots[i];
+
+    if (slot.stream) {
+      const video = document.createElement("video");
+      video.srcObject = slot.stream;
+      video.autoplay = true;
+      video.playsInline = true;
+      video.muted = false;
+      video.style.width = "100%";
+      video.style.height = "100%";
+
+      body.appendChild(video);
+    } else {
+      body.innerHTML = "<p>Keine Freigabe aktiv</p>";
+    }
+  });
+}
+
+// =============================
 // BUTTON
 // =============================
 
-document.getElementById("shareScreenBtn")?.addEventListener("click", async () => {
-  const input = prompt("Screen wählen (1-4)", "1");
-  if (!input) return;
-
-  const slot = parseInt(input) - 1;
-
-  if (localScreens[slot]) {
-    localScreens[slot].stream.getTracks().forEach(t => t.stop());
-    delete localScreens[slot];
-  } else {
-    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-    localScreens[slot] = { stream };
-
-    await client.from("screen_share").insert([{
-      room_code: state.currentRoom,
-      owner: state.currentParticipantName,
-      slot_index: slot,
-      active: true
-    }]);
-  }
-});
-
-// =============================
-// START
-// =============================
-
 document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("shareScreenBtn")?.addEventListener("click", async () => {
+
+    const input = prompt("Screen wählen (1-4)", "1");
+    if (!input) return;
+
+    const slot = parseInt(input) - 1;
+    if (slot < 0 || slot > 3) return;
+
+    if (localScreens[slot]) {
+      localScreens[slot].stream.getTracks().forEach(t => t.stop());
+      delete localScreens[slot];
+    } else {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+
+      localScreens[slot] = { stream };
+
+      await client.from("screen_share").insert([{
+        room_code: state.currentRoom,
+        owner: state.currentParticipantName,
+        slot_index: slot,
+        active: true
+      }]);
+    }
+  });
+
   setStatus("TableProject bereit");
 });
