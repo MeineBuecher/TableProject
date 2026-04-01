@@ -1,8 +1,12 @@
-// main.js (CLEAN TABLEPROJECT)
+// main.js (FINAL TABLEPROJECT)
 
 import { setStatus } from "./utils.js";
 import { client } from "./supabase.js";
 import * as state from "./state.js";
+
+// 🔥 NEU – MODULE
+import { loadScreens, toggleScreen, renderScreens } from "./screen.js";
+import { handleSignal, notifyViewer } from "./webrtc.js";
 
 // =============================
 // REALTIME CHANNELS
@@ -12,17 +16,7 @@ let participantChannel = null;
 let chatChannel = null;
 let storageChannel = null;
 let screenChannel = null;
-
-// =============================
-// SCREEN SLOTS (ARBEITSPLÄTZE)
-// =============================
-
-let screenSlots = [
-  { owner: null },
-  { owner: null },
-  { owner: null },
-  { owner: null }
-];
+let webrtcChannel = null;
 
 // =============================
 // BASIS
@@ -84,6 +78,7 @@ async function joinRoom() {
   subscribeChat();
   subscribeStorage();
   subscribeScreens();
+  subscribeWebRTC();
 }
 
 // =============================
@@ -226,50 +221,8 @@ function subscribeStorage() {
 }
 
 // =============================
-// 🔥 SCREEN = ARBEITSPLÄTZE
+// SCREEN REALTIME
 // =============================
-
-async function loadScreens() {
-  const { data } = await client
-    .from("screen_share")
-    .select("*")
-    .eq("room_code", state.currentRoom);
-
-  screenSlots = [
-    { owner: null },
-    { owner: null },
-    { owner: null },
-    { owner: null }
-  ];
-
-  (data || []).forEach(s => {
-    screenSlots[s.slot_index] = { owner: s.owner };
-  });
-
-  renderScreens();
-}
-
-function renderScreens() {
-  const boxes = [
-    document.getElementById("primaryScreen"),
-    document.getElementById("screenThumb1"),
-    document.getElementById("screenThumb2"),
-    document.getElementById("screenThumb3")
-  ];
-
-  boxes.forEach((box, i) => {
-    if (!box) return;
-
-    const body = box.querySelector(".screen-slot-body");
-    const owner = screenSlots[i].owner;
-
-    if (owner) {
-      body.innerHTML = `<p><strong>${owner}</strong><br>arbeitet hier</p>`;
-    } else {
-      body.innerHTML = "<p>Frei</p>";
-    }
-  });
-}
 
 function subscribeScreens() {
   if (screenChannel) client.removeChannel(screenChannel);
@@ -281,51 +234,79 @@ function subscribeScreens() {
       schema: "public",
       table: "screen_share",
       filter: "room_code=eq." + state.currentRoom
-    }, loadScreens)
+    }, async () => {
+      await loadScreens();
+
+      // 🔥 WICHTIG: Viewer automatisch verbinden
+      document.querySelectorAll(".screen-slot-body").forEach((_, i) => {
+        const slot = i;
+        const owner = state.currentParticipantName;
+
+        // wenn nicht eigener Screen → Verbindung starten
+        if (owner !== state.currentParticipantName) {
+          notifyViewer(owner, slot);
+        }
+      });
+    })
     .subscribe();
 }
 
 // =============================
-// SLOT ÜBERNEHMEN
+// 🔥 WEBRTC REALTIME
 // =============================
 
-async function toggleScreenSlot() {
-  const input = prompt("Slot wählen (1-4)", "1");
-  if (!input) return;
+function subscribeWebRTC() {
+  if (webrtcChannel) client.removeChannel(webrtcChannel);
 
-  const slot = parseInt(input) - 1;
-
-  const existing = await client
-    .from("screen_share")
-    .select("*")
-    .eq("room_code", state.currentRoom)
-    .eq("slot_index", slot);
-
-  if (existing.data.length && existing.data[0].owner === state.currentParticipantName) {
-    await client.from("screen_share").delete()
-      .eq("room_code", state.currentRoom)
-      .eq("slot_index", slot);
-
-    setStatus("Slot freigegeben");
-  } else {
-    await client.from("screen_share").upsert({
-      room_code: state.currentRoom,
-      slot_index: slot,
-      owner: state.currentParticipantName
-    });
-
-    setStatus("Slot übernommen");
-  }
+  webrtcChannel = client
+    .channel("webrtc-" + state.currentRoom)
+    .on("postgres_changes", {
+      event: "INSERT",
+      schema: "public",
+      table: "webrtc_signals",
+      filter: "room_code=eq." + state.currentRoom
+    }, async (payload) => {
+      await handleSignal(payload.new, window.localScreens || {});
+    })
+    .subscribe();
 }
 
 // =============================
-// BUTTONS
+// SCREEN BUTTON
 // =============================
 
 document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("shareScreenBtn")
-    ?.addEventListener("click", toggleScreenSlot);
+    ?.addEventListener("click", toggleScreen);
+
+  // 🔥 GLOBAL RENDER für WebRTC
+  window.renderRemoteStream = (slot, stream) => {
+    const ids = [
+      "primaryScreen",
+      "screenThumb1",
+      "screenThumb2",
+      "screenThumb3"
+    ];
+
+    const box = document.getElementById(ids[slot]);
+    if (!box) return;
+
+    const body = box.querySelector(".screen-slot-body");
+    if (!body) return;
+
+    body.innerHTML = "";
+
+    const video = document.createElement("video");
+    video.srcObject = stream;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.muted = true;
+    video.style.width = "100%";
+    video.style.height = "100%";
+
+    body.appendChild(video);
+  };
 
   setStatus("TableProject bereit");
 });
