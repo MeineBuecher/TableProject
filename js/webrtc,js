@@ -11,16 +11,23 @@ const RTC_CONFIG = {
 
 let peerConnections = {};
 let remoteStreams = {};
+let handledSignals = new Set();
+
+// =============================
+// KEY
+// =============================
 
 function getKey(user, slot) {
   return `${user}_${slot}`;
 }
 
 // =============================
-// VIEWER SIGNAL
+// VIEWER SIGNAL (jemand will sehen)
 // =============================
 
 export async function notifyViewer(owner, slot) {
+  if (!state.currentRoom) return;
+
   await client.from("webrtc_signals").insert([{
     room_code: state.currentRoom,
     sender: state.currentParticipantName,
@@ -31,7 +38,7 @@ export async function notifyViewer(owner, slot) {
 }
 
 // =============================
-// SENDER
+// SENDER (der teilt)
 // =============================
 
 function createSender(viewer, slot, stream) {
@@ -58,7 +65,7 @@ function createSender(viewer, slot, stream) {
 }
 
 // =============================
-// VIEWER
+// VIEWER (der empfängt)
 // =============================
 
 function createViewer(owner, slot) {
@@ -66,9 +73,13 @@ function createViewer(owner, slot) {
 
   pc.ontrack = e => {
     const stream = e.streams[0];
+
     remoteStreams[getKey(owner, slot)] = stream;
 
-    window.renderRemoteStream(slot, stream);
+    // 🔥 wichtig: direkt rendern
+    if (window.renderRemoteStream) {
+      window.renderRemoteStream(slot, stream);
+    }
   };
 
   pc.onicecandidate = async e => {
@@ -88,66 +99,123 @@ function createViewer(owner, slot) {
 }
 
 // =============================
-// SIGNAL HANDLER
+// SIGNAL HANDLER (HERZ)
 // =============================
 
 export async function handleSignal(signal, localScreens) {
+
+  if (!signal || handledSignals.has(signal.id)) return;
+  handledSignals.add(signal.id);
 
   const { type, sender, target, payload } = signal;
   const slot = payload?.slot;
 
   if (target !== state.currentParticipantName) return;
 
-  // VIEWER READY
-  if (type === "viewer_ready") {
-    const stream = localScreens[slot]?.stream;
-    if (!stream) return;
+  try {
 
-    const pc = createSender(sender, slot, stream);
+    // =============================
+    // VIEWER READY → Sender reagiert
+    // =============================
+    if (type === "viewer_ready") {
+      const stream = localScreens[slot]?.stream;
+      if (!stream) return;
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
+      let pc = peerConnections[getKey(sender, slot)];
 
-    await client.from("webrtc_signals").insert([{
-      room_code: state.currentRoom,
-      sender: state.currentParticipantName,
-      target: sender,
-      type: "offer",
-      payload: { offer, slot }
-    }]);
+      if (!pc) {
+        pc = createSender(sender, slot, stream);
+      }
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      await client.from("webrtc_signals").insert([{
+        room_code: state.currentRoom,
+        sender: state.currentParticipantName,
+        target: sender,
+        type: "offer",
+        payload: { offer, slot }
+      }]);
+    }
+
+    // =============================
+    // OFFER → Viewer antwortet
+    // =============================
+    if (type === "offer") {
+
+      let pc = peerConnections[getKey(sender, slot)];
+
+      if (!pc) {
+        pc = createViewer(sender, slot);
+      }
+
+      await pc.setRemoteDescription(
+        new RTCSessionDescription(payload.offer)
+      );
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      await client.from("webrtc_signals").insert([{
+        room_code: state.currentRoom,
+        sender: state.currentParticipantName,
+        target: sender,
+        type: "answer",
+        payload: { answer, slot }
+      }]);
+    }
+
+    // =============================
+    // ANSWER → Sender finalisiert
+    // =============================
+    if (type === "answer") {
+      const pc = peerConnections[getKey(sender, slot)];
+      if (!pc) return;
+
+      await pc.setRemoteDescription(
+        new RTCSessionDescription(payload.answer)
+      );
+    }
+
+    // =============================
+    // ICE Candidate
+    // =============================
+    if (type === "candidate") {
+      const pc = peerConnections[getKey(sender, slot)];
+      if (!pc) return;
+
+      try {
+        await pc.addIceCandidate(
+          new RTCIceCandidate(payload.candidate)
+        );
+      } catch {
+        // Retry fallback (wichtig bei langsamen Verbindungen)
+        setTimeout(async () => {
+          try {
+            await pc.addIceCandidate(
+              new RTCIceCandidate(payload.candidate)
+            );
+          } catch {}
+        }, 300);
+      }
+    }
+
+  } catch (err) {
+    console.error("WebRTC Fehler:", err);
   }
+}
 
-  // OFFER
-  if (type === "offer") {
-    const pc = createViewer(sender, slot);
+// =============================
+// CLEANUP (wichtig bei Raumwechsel)
+// =============================
 
-    await pc.setRemoteDescription(new RTCSessionDescription(payload.offer));
+export function resetWebRTC() {
+  Object.values(peerConnections).forEach(pc => {
+    try { pc.close(); } catch {}
+  });
 
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-
-    await client.from("webrtc_signals").insert([{
-      room_code: state.currentRoom,
-      sender: state.currentParticipantName,
-      target: sender,
-      type: "answer",
-      payload: { answer, slot }
-    }]);
-  }
-
-  // ANSWER
-  if (type === "answer") {
-    const pc = peerConnections[getKey(sender, slot)];
-    if (!pc) return;
-
-    await pc.setRemoteDescription(new RTCSessionDescription(payload.answer));
-  }
-
-  // ICE
-  if (type === "candidate") {
-    const pc = peerConnections[getKey(sender, slot)];
-    if (!pc) return;
-
-    await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
-  }
+  peerConnections = {};
+  remoteStreams = {};
+  handledSignals.clear();
 }
