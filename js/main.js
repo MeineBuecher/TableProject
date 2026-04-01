@@ -10,6 +10,7 @@ import * as state from "./state.js";
 
 let participantChannel = null;
 let chatChannel = null;
+let storageChannel = null; // 🔥 NEU
 
 // =============================
 // BASIS FUNKTIONEN
@@ -23,6 +24,38 @@ function getName() {
 function getRoom() {
   const input = document.getElementById("roomInput");
   return input ? input.value.trim().toUpperCase() : "";
+}
+
+// =============================
+// 🔥 STORAGE UPLOAD CORE
+// =============================
+
+async function uploadToStorage(file, type) {
+  if (!state.currentRoom) throw new Error("Kein Raum aktiv");
+
+  const fileName =
+    Date.now() +
+    "_" +
+    Math.random().toString(36).substring(2, 8) +
+    "_" +
+    file.name;
+
+  const path = `${state.currentRoom}/${type}/${fileName}`;
+
+  const { error } = await client.storage
+    .from("faceproject-files")
+    .upload(path, file);
+
+  if (error) throw error;
+
+  const { data } = client.storage
+    .from("faceproject-files")
+    .getPublicUrl(path);
+
+  return {
+    path,
+    url: data.publicUrl
+  };
 }
 
 // =============================
@@ -90,7 +123,6 @@ async function joinRoom() {
   state.currentParticipantName = name;
   state.currentRoomOwner = data[0].owner_name;
 
-  // Teilnehmer speichern
   await client.from("participants").insert([
     {
       room_code: code,
@@ -103,10 +135,11 @@ async function joinRoom() {
 
   loadParticipants();
   loadChat();
+  loadStorageItems(); // 🔥 NEU
 
-  // 🔥 REALTIME START
   subscribeParticipantsRealtime();
   subscribeChatRealtime();
+  subscribeStorageRealtime(); // 🔥 NEU
 }
 
 // =============================
@@ -167,7 +200,6 @@ function subscribeChatRealtime() {
 
 function appendChatMessage(msg) {
   const box = document.getElementById("chatMessages");
-
   if (!box) return;
 
   const div = document.createElement("div");
@@ -178,160 +210,135 @@ function appendChatMessage(msg) {
 }
 
 // =============================
-// TEILNEHMER LADEN
+// 🔥 REALTIME STORAGE
 // =============================
 
-async function loadParticipants() {
+function subscribeStorageRealtime() {
   if (!state.currentRoom) return;
 
-  const { data } = await client
-    .from("participants")
-    .select("*")
-    .eq("room_code", state.currentRoom);
-
-  const box = document.getElementById("participantsBox");
-
-  if (!box) return;
-
-  if (!data || !data.length) {
-    box.innerHTML = "<p>Keine Teilnehmer</p>";
-    return;
+  if (storageChannel) {
+    client.removeChannel(storageChannel);
   }
 
-  let html = "<h3>Im Raum:</h3>";
-
-  data.forEach(p => {
-    html += `<div>${p.name}</div>`;
-  });
-
-  box.innerHTML = html;
+  storageChannel = client
+    .channel("storage-" + state.currentRoom)
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "storage_items",
+        filter: "room_code=eq." + state.currentRoom
+      },
+      () => {
+        loadStorageItems();
+      }
+    )
+    .subscribe();
 }
 
 // =============================
-// CHAT
+// STORAGE LADEN
 // =============================
 
-async function sendChatMessage() {
-  if (!state.currentRoom) return;
-
-  const input = document.getElementById("chatInput");
-  const text = input.value.trim();
-
-  if (!text) return;
-
-  await client.from("chat_messages").insert([
-    {
-      room_code: state.currentRoom,
-      sender_name: state.currentParticipantName,
-      message: text
-    }
-  ]);
-
-  input.value = "";
-
-  // ❌ KEIN loadChat mehr → Realtime übernimmt
-}
-
-async function loadChat() {
+async function loadStorageItems() {
   if (!state.currentRoom) return;
 
   const { data } = await client
-    .from("chat_messages")
+    .from("storage_items")
     .select("*")
     .eq("room_code", state.currentRoom)
     .order("created_at", { ascending: true });
 
-  const box = document.getElementById("chatMessages");
+  const files = document.getElementById("filesArea");
+  const images = document.getElementById("imagesArea");
+  const texts = document.getElementById("textsArea");
 
-  if (!data || !data.length) {
-    box.innerHTML = "<p>Noch keine Nachrichten</p>";
-    return;
-  }
+  if (!files || !images || !texts) return;
 
-  box.innerHTML = data
-    .map(
-      msg => `
-      <div>
-        <strong>${msg.sender_name}</strong><br>
-        ${msg.message}
-      </div>
-    `
-    )
-    .join("");
+  files.innerHTML = "";
+  images.innerHTML = "";
+  texts.innerHTML = "";
 
-  box.scrollTop = box.scrollHeight;
+  (data || []).forEach(item => {
+    if (item.type === "file") {
+      files.innerHTML += `<a href="${item.content}" target="_blank">${item.file_name}</a><br>`;
+    }
+
+    if (item.type === "image") {
+      images.innerHTML += `<img src="${item.content}" style="width:100%;border-radius:10px;margin-bottom:10px;">`;
+    }
+
+    if (item.type === "text") {
+      texts.innerHTML += `<div>${item.content}</div>`;
+    }
+  });
 }
 
 // =============================
-// ARBEIT STATUS (MINIMAL)
-// =============================
-
-async function workNow() {
-  setStatus("Du arbeitest jetzt");
-}
-
-async function pauseWork() {
-  setStatus("Raum pausiert");
-}
-
-async function resumeWork() {
-  setStatus("Raum fortgesetzt");
-}
-
-async function stopWork() {
-  setStatus("Arbeit beendet");
-}
-
-async function leaveRoom() {
-  // 🔥 Channels sauber schließen
-  if (participantChannel) {
-    client.removeChannel(participantChannel);
-    participantChannel = null;
-  }
-
-  if (chatChannel) {
-    client.removeChannel(chatChannel);
-    chatChannel = null;
-  }
-
-  state.currentRoom = null;
-  state.currentParticipantName = null;
-
-  setStatus("Raum verlassen");
-
-  document.getElementById("participantsBox").innerHTML = "";
-  document.getElementById("chatMessages").innerHTML =
-    "<p>Noch keine Nachrichten</p>";
-}
-
-// =============================
-// SCREEN (Platzhalter)
-// =============================
-
-function promoteScreen(index) {
-  console.log("Screen wechseln:", index);
-}
-
-// =============================
-// GLOBAL (WICHTIG für HTML)
-// =============================
-
-window.createRoom = createRoom;
-window.joinRoom = joinRoom;
-window.sendChatMessage = sendChatMessage;
-
-window.workNow = workNow;
-window.pauseWork = pauseWork;
-window.resumeWork = resumeWork;
-window.stopWork = stopWork;
-window.leaveRoom = leaveRoom;
-
-window.promoteScreen = promoteScreen;
-
-// =============================
-// START
+// UPLOAD BUTTONS
 // =============================
 
 document.addEventListener("DOMContentLoaded", () => {
+  // FILE
+  document.getElementById("uploadFileBtn")?.addEventListener("click", () => {
+    const input = document.createElement("input");
+    input.type = "file";
+
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) return;
+
+      const uploaded = await uploadToStorage(file, "file");
+
+      await client.from("storage_items").insert([{
+        room_code: state.currentRoom,
+        type: "file",
+        content: uploaded.url,
+        file_name: file.name,
+        storage_path: uploaded.path
+      }]);
+    };
+
+    input.click();
+  });
+
+  // IMAGE (📱 FIX)
+  document.getElementById("uploadImageBtn")?.addEventListener("click", () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.capture = "environment";
+
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) return;
+
+      const uploaded = await uploadToStorage(file, "image");
+
+      await client.from("storage_items").insert([{
+        room_code: state.currentRoom,
+        type: "image",
+        content: uploaded.url,
+        file_name: file.name,
+        storage_path: uploaded.path
+      }]);
+    };
+
+    input.click();
+  });
+
+  // TEXT
+  document.getElementById("addTextBtn")?.addEventListener("click", async () => {
+    const text = prompt("Text eingeben:");
+    if (!text) return;
+
+    await client.from("storage_items").insert([{
+      room_code: state.currentRoom,
+      type: "text",
+      content: text
+    }]);
+  });
+
   setStatus("TableProject bereit");
 });
