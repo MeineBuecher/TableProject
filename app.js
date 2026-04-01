@@ -2130,10 +2130,19 @@ async function announceViewerReady(ownerName, slotIndex) {
   }
 }
 
-function createSenderPeerConnection(viewerName, slotIndex) {
-  const pc = new RTCPeerConnection(RTC_CONFIG);
-  const key = createPeerConnectionKey(viewerName, slotIndex);
+const localEntry = localSharedScreens[slotIndex];
 
+if (!localEntry || !localEntry.stream) {
+  console.log("❌ Kein Stream vorhanden");
+  return pc;
+}
+
+console.log("✅ Sende Stream an:", viewerName);
+
+// 🔥 DAS IST DER WICHTIGSTE TEIL
+localEntry.stream.getTracks().forEach(track => {
+  pc.addTrack(track, localEntry.stream);
+});
   const localEntry = localSharedScreens[slotIndex];
 
   if (!localEntry || !localEntry.stream) {
